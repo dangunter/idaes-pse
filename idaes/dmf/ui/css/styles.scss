@@ -1,0 +1,105 @@
+// styles.scss
+@use 'base';
+
+$font-stack: 'Roboto', sans-serif;
+$background-color: #353A46;
+$background-frame-color: darken($background-color, 10%);
+$foreground-color: #FFFFFF;
+$subtle-color: #5d74af;
+$emphasis-color: #d7ffd9;
+$contrast-color: #e0efff;
+$light-color: #ddd;
+$header-height: 30px;
+$footer-height: $header-height;
+$min-side-height: 250px;
+$min-main-width: 500px;
+$min-side-width: 250px; 
+$content-inset: 8px;
+
+body {
+    font: 100% $font-stack;
+    margin: 0;
+    padding: 0;
+    color: $foreground-color;
+    background: $background-color;
+}
+
+.content {
+    height: 100vh;
+    padding: 0;
+    margin: 0;
+    margin-left: $content-inset;
+    display: grid;
+    // 2 columns x 4 rows
+    grid-template-columns: minmax(500px, 2fr) minmax(250px, 1fr);
+    grid-template-rows: $header-height minmax(250px, 1fr) minmax(250px, 1fr) $footer-height;
+    column-gap: 5px;
+    row-gap: 5px;
+    .c-main {
+        grid-column: 1;
+        grid-row: 2 / span 2;
+    }
+    .c-header {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        background: $background-frame-color;
+        margin-left: -$content-inset;
+        .title {
+            font-size: 110%;
+            position: absolute;
+            top: 0.25em;
+            left: 6em;
+            color: $contrast-color;
+        }
+    }
+    .c-footer {
+        grid-column: 1 / -1;
+        grid-row: 4;
+        background: $background-frame-color;
+        margin-left: -$content-inset;
+        .status {
+            color: $subtle-color;
+            font-style: italic;
+            position: absolute;
+            bottom: 5px;
+            left: 5px;
+        }
+    }
+    .title {
+        color: $emphasis-color;
+        font-size: 90%;
+    }
+    /* horizontal line with 2 shadows = hamburger! */
+    .hamburger {
+        content: "";
+        position: absolute;
+        top: 0.5em;
+        left: $content-inset;
+        width: 1.5em;
+        height: 0.1875em;
+        border-top: 0.5em double $light-color;
+        border-bottom: 0.1875em solid $light-color;
+    }
+}
+
+table[data-sortable] {
+    margin: 0;
+    padding: 0;
+    width: 95%;
+    font-size: 100%;
+}
+table[data-sortable].sortable-theme-dark {
+    color: #b9b9b9;
+    background: transparent;
+    tbody td, thead th {
+        //border: 0;
+        padding: 0;
+        padding-top: 0.25em;
+        padding-bottom: 0.25em;
+    }
+    thead th {
+        color: $contrast-color;
+        font-weight: 500;
+        padding-top: 0.5em;
+    }
+}

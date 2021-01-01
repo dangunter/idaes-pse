@@ -1,0 +1,51 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DMF Browser</title>
+    <meta name="description" content="IDAES Data Management Framework Browser">
+    <meta name="author" content="Dan Gunter">
+    <!-- Roboto font -->
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet"> 
+    <!-- Bootstrap 
+        <link rel="stylesheet" href="css/bootstrap.min.css">
+    -->
+    <!-- Sortable -->
+    <link rel="stylesheet" href="css/sortable-dark-theme.css" />
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="css/styles.css?v=1.0">
+</head>
+
+<body>
+    <div class="content">
+        <div class="c-header"><a href="#menu" class="hamburger"></a></a><span class="title">DMF Browser</span></div>
+        <div class="c-main">
+            <div class="title">Resources</div>
+            <table class="sortable-theme-dark" data-sortable>
+                <thead>
+                    <tr>
+                        <th>Column 1</th>
+                        <th>Column 2</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Item 1-1</td>
+                        <td>Item 2-1</td>
+                    </tr>
+                    <tr>
+                        <td>Item 1-2</td>
+                        <td>Item 2-2</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="c-side"><span class="title">Related</span></div>
+        <div class="c-side"><span class="title">Data</span></div>
+        <div class="c-footer"><span class="status">Status messages go here</span></div>
+    </div>
+  <script src="js/main.js"></script>
+  <script src="js/sortable.min.js"></script>
+</html>
