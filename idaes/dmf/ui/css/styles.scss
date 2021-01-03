@@ -2,13 +2,13 @@
 @use 'base';
 
 $font-stack: 'Roboto', sans-serif;
-$background-color: #353A46;
-$background-frame-color: darken($background-color, 10%);
-$foreground-color: #FFFFFF;
-$subtle-color: #5d74af;
-$emphasis-color: #d7ffd9;
-$contrast-color: #e0efff;
-$light-color: #ddd;
+/* colors */
+$bg1: #0B0C10DD;
+$bg2: url("../images/scratch-metal-texture-dark.jpg");
+$fg1: #C5C6C7; // main
+$fg2: #66FCF1; // accent
+$fg3: #45A29E; // subtler
+/* sizes */
 $header-height: 30px;
 $footer-height: $header-height;
 $min-side-height: 250px;
@@ -20,65 +20,75 @@ body {
     font: 100% $font-stack;
     margin: 0;
     padding: 0;
-    color: $foreground-color;
-    background: $background-color;
+    color: $fg1;
+    background: $bg2;
 }
 
 .content {
-    height: 100vh;
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0 5px;
     padding: 0;
-    margin: 0;
-    margin-left: $content-inset;
     display: grid;
-    // 2 columns x 4 rows
-    grid-template-columns: minmax(500px, 2fr) minmax(250px, 1fr);
-    grid-template-rows: $header-height minmax(250px, 1fr) minmax(250px, 1fr) $footer-height;
-    column-gap: 5px;
+    // 2 columns x 3 rows
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto 1fr auto 1fr auto;
     row-gap: 5px;
-    .c-main {
-        grid-column: 1;
-        grid-row: 2 / span 2;
-    }
+    column-gap: 5px;
+    height: 100vh;
+    //
     .c-header {
         grid-column: 1 / -1;
         grid-row: 1;
-        background: $background-frame-color;
-        margin-left: -$content-inset;
         .title {
-            font-size: 110%;
-            position: absolute;
-            top: 0.25em;
-            left: 6em;
-            color: $contrast-color;
+            font-size: 100%;
+            color: $fg1;
+            line-height: 2em;
+            margin-left: 2em;
         }
+    }
+    .c-main {
+        grid-column: 1;
+        grid-row: 3 / span 3;
+        background: $bg1;
+    }
+    .c-title {
+        background: transparent;
+        color: $fg2;
+        font-size: 90%;
+        line-height: 2em;
+        text-align: left;
+    }
+    .c-side1 {
+        grid-column: 2;
+        grid-row: 3;
+        background: $bg1;
+    }
+    .c-side2 {
+        grid-column: 2;
+        grid-row: 5;
+        background: $bg1;
     }
     .c-footer {
         grid-column: 1 / -1;
-        grid-row: 4;
-        background: $background-frame-color;
-        margin-left: -$content-inset;
+        grid-row: 6;
         .status {
-            color: $subtle-color;
+            color: $fg1;
             font-style: italic;
-            position: absolute;
-            bottom: 5px;
-            left: 5px;
+            line-height: 2em;
+            margin-left: 1em;
         }
-    }
-    .title {
-        color: $emphasis-color;
-        font-size: 90%;
     }
     /* horizontal line with 2 shadows = hamburger! */
     .hamburger {
         content: "";
         position: absolute;
         top: 0.5em;
-        left: $content-inset;
+        left: 5px;
         width: 1.5em;
-        height: 0.1875em;
-        border-top: 0.5em double $light-color;
-        border-bottom: 0.1875em solid $light-color;
+        height: 0.15em;
+        border-top: 0.5em double $fg3;
+        border-bottom: 0.1875em solid $fg3;
     }
 }
 
@@ -89,16 +99,15 @@ table[data-sortable] {
     font-size: 100%;
 }
 table[data-sortable].sortable-theme-dark {
-    color: #b9b9b9;
+    color: $fg1;
     background: transparent;
     tbody td, thead th {
-        //border: 0;
         padding: 0;
         padding-top: 0.25em;
         padding-bottom: 0.25em;
     }
     thead th {
-        color: $contrast-color;
+        color: $fg3;
         font-weight: 500;
         padding-top: 0.5em;
     }
