@@ -70,7 +70,7 @@ class FileError(Exception):
     pass
 
 
-class ResourceError(Exception):
+class ResourceError(DMFError):
     pass
 
 

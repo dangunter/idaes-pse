@@ -104,8 +104,8 @@ class ResourceTypes:
     code = "code"                           #: Source code(s)
     surrogate_model = "surrogate_model"     #: Surrogate model
     data = "data"                           #: Generic data
-    other = "json"                          #: JSON data
-    json = "other"                          #: User-defined type of resource
+    other = "other"                          #: JSON data
+    json = "json"                          #: User-defined type of resource
     resource_json = "resource_json"         #: JSON serialized resource
 
     @classmethod

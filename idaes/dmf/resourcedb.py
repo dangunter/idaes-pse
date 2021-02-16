@@ -249,6 +249,7 @@ class ResourceDB(object):
         Raises:
             KeyError if the resource is not found.
         """
+        _nm = "find_related"
         if maxdepth <= 0:
             maxdepth = 9223372036854775807
         # Get an iterator over all the resources, optionally
@@ -261,8 +262,8 @@ class ResourceDB(object):
         # build adjacency list representing connections between resources
         relation_map = {}
         for rsrc in resource_list:
-            # print(f"@@ process resource: {rsrc[Resource.ID_FIELD]}")
-            # print(f"@@ resource relations: {rsrc['relations']}")
+            _log.debug(f"{_nm}.process resource: {rsrc[Resource.ID_FIELD]}")
+            _log.debug(f"{_nm}.resource relations: {rsrc['relations']}")
             for rrel in rsrc['relations']:
                 uuid = rsrc[Resource.ID_FIELD]
                 rel = triple_from_resource_relations(uuid, rrel)
@@ -270,11 +271,11 @@ class ResourceDB(object):
                 if (outgoing and rel.subject == uuid) or (
                     not outgoing and rel.object == uuid
                 ):
-                    # print(f"@@ do nothing for: {uuid}")
+                    _log.debug(f"{_nm}: do nothing for: {uuid}")
                     continue
                 # add entry in map
                 key = rel.subject if outgoing else rel.object
-                # print(f"@@ add to relation map, key={key}")
+                _log.debug(f"add to relation map, key={key}")
                 meta_info = {k: rsrc[k] for k in meta}
                 value = (rel.subject, rel.predicate, rel.object, meta_info)
                 value_list = relation_map.get(key, None)
@@ -282,7 +283,7 @@ class ResourceDB(object):
                     relation_map[key] = [value]
                 else:
                     value_list.append(value)
-        _log.debug(f"built relation map: {relation_map}")
+        _log.debug(f"{_nm}: built relation map => {relation_map}")
         # stop if there are no connections
         if id_ not in relation_map:
             return

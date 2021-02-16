@@ -689,6 +689,7 @@ class DMF(workspace.Workspace, HasTraits):
                 Resource.TYPE_FIELD,
                 "desc",
                 "version_info",
+                "aliases",
             ]
         else:
             if Resource.ID_FIELD not in meta:
