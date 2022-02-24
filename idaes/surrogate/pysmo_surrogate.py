@@ -10,18 +10,24 @@
 # Please see the files COPYRIGHT.md and LICENSE.md for full copyright and
 # license information.
 #################################################################################
-import numpy as np
-import pandas as pd
+
+
+# stdlib
+import io
 import json
+from json import JSONEncoder, JSONDecoder, JSONDecodeError
 from typing import Dict, Union
 
-# import jsonpickle
+# third-party
+import numpy as np
+import pandas as pd
 
+# package
+import pyomo.core as pc
 from pyomo.core.base.param import Param
 from pyomo.environ import Constraint, sin, cos, log, exp, Set, Reals
 from pyomo.common.config import ConfigValue, In, Bool
 from pyomo.common.config import PositiveInt, PositiveFloat
-
 from idaes.surrogate.base.surrogate_base import SurrogateTrainer, SurrogateBase
 from idaes.surrogate.pysmo import (
     polynomial_regression as pr,
@@ -29,40 +35,74 @@ from idaes.surrogate.pysmo import (
     kriging as krg,
 )
 import idaes.logger as idaeslog
-
-from json import JSONEncoder
-import pyomo.core as pc
 from idaes.core.util import to_json
 
-# from idaes.surrogate.pysmo.polynomial_regression import PolynomialRegression
 
-# Set up logger
+# Logging
+# -------
 _log = idaeslog.getLogger(__name__)
 
+# Global variables
+# ----------------
 GLOBAL_FUNCS = {"sin": sin, "cos": cos, "log": log, "exp": exp}
+
+# Classes
+# -------
 
 
 class SurrogateTrainingResult:
-    def __init__(self):
-        self.metrics = {}
-        self.model = None
-        self.expression_str = ""
+    """Result of training a surrogate for a single output."""
 
-class SurrogateTrainingResults:
+    def __init__(self):
+        self.metrics = {}  # Metrics for the fit
+        self._model = None  # Surrogate model object (set/get as property)
+        self.expression_str = (
+            ""  # Pyomo expression, as a string, for additional variables
+        )
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        """This sets the 'expression_str' attribute as a side-effect, so may raise
+        errors related to that operation. If so, the new value is *not* set.
+        """
+        variable_names = list(value.get_feature_vector().values())
+        self.expression_str = str(value.generate_expression(variable_names))
+        self._model = value
+
+
+class TrainedSurrogate:
+    """A surrogate that is trained for one or more outputs.
+
+    This object is used for saving and loading the surrogate model along with its metrics and expression.
+    """
+
     def __init__(self, model_type=""):
         self._data = {}
         self.model_type = model_type
         self.num_outputs = 0
+        self.output_labels = []
+        self.input_labels, self.input_bounds = None, None
 
     def add_result(self, output_name, result):
         self._data[output_name] = result
+        self.output_labels.append(output_name)
+        self.num_outputs += 1
 
     def get_result(self, output_name) -> SurrogateTrainingResult:
         return self._data[output_name]
 
+
+# Surrogate trainer classes
+# -------------------------
+
+
 class PysmoTrainer(SurrogateTrainer):
-    """Base class for Pysmo surrogate training classes.
-    """
+    """Base class for Pysmo surrogate trainer classes."""
+
     # Initialize with configuration for base SurrogateTrainer
     CONFIG = SurrogateTrainer.CONFIG()
 
@@ -71,21 +111,21 @@ class PysmoTrainer(SurrogateTrainer):
 
     def __init__(self, **settings):
         super().__init__(**settings)
-        self._results = SurrogateTrainingResults(model_type=self.model_type)
+        self._trained = TrainedSurrogate(model_type=self.model_type)
 
-    def train_surrogate(self) -> SurrogateTrainingResults:
-        self._results.num_outputs = len(self._output_labels)
+    def train_surrogate(self) -> TrainedSurrogate:
+        self._trained.num_outputs = len(self._output_labels)
         self._training_main_loop()
-        return self._results
+        return self._trained
 
-    def _create_model(self, pysmo_input: pd.DataFrame, output_label: str) -> Union[pr.PolynomialRegression, rbf.RadialBasisFunctions, krg.KrigingModel]:
-        """Subclasses must override this and make it return a PySMO model.
-        """
+    def _create_model(
+        self, pysmo_input: pd.DataFrame, output_label: str
+    ) -> Union[pr.PolynomialRegression, rbf.RadialBasisFunctions, krg.KrigingModel]:
+        """Subclasses must override this and make it return a PySMO model."""
         pass
 
     def _get_metrics(self, model) -> Dict:
-        """Subclasses should override this to return a dict of metrics for the model.
-        """
+        """Subclasses should override this to return a dict of metrics for the model."""
         return {}
 
     def _training_main_loop(self):
@@ -104,10 +144,8 @@ class PysmoTrainer(SurrogateTrainer):
             # Store results
             result = SurrogateTrainingResult()
             result.model = model
-            variable_names = list(model.get_feature_vector().values())
-            result.expression_str = str(model.generate_expression(variable_names))
             result.metrics = self._get_metrics(model)
-            self._results.add_result(output_label, result)
+            self._trained.add_result(output_label, result)
             # Log the status
             _log.info(f"Model for output {output_label} trained successfully")
 
@@ -116,8 +154,8 @@ class PysmoTrainer(SurrogateTrainer):
 
 
 class PysmoPolyTrainer(PysmoTrainer):
-    """Train a polynomial model.
-    """
+    """Train a polynomial model."""
+
     model_type = "poly"
 
     CONFIG = PysmoTrainer.CONFIG()
@@ -179,14 +217,14 @@ class PysmoPolyTrainer(PysmoTrainer):
 
     def _create_model(self, pysmo_input, output_label):
         model = pr.PolynomialRegression(
-                pysmo_input,
-                pysmo_input,
-                maximum_polynomial_order=self.config.maximum_polynomial_order,
-                training_split=self.config.training_split,
-                solution_method=self.config.solution_method,
-                multinomials=self.config.multinomials,
-                number_of_crossvalidations=self.config.number_of_crossvalidations,
-                fname=self._get_output_filename(output=output_label)
+            pysmo_input,
+            pysmo_input,
+            maximum_polynomial_order=self.config.maximum_polynomial_order,
+            training_split=self.config.training_split,
+            solution_method=self.config.solution_method,
+            multinomials=self.config.multinomials,
+            number_of_crossvalidations=self.config.number_of_crossvalidations,
+            fname=self._get_output_filename(output=output_label),
         )
         variable_headers = model.get_feature_vector()
         if self.config.extra_features is not None:
@@ -195,16 +233,12 @@ class PysmoPolyTrainer(PysmoTrainer):
                 add_terms = self.config.extra_features
                 for j in model.regression_data_columns:
                     add_terms = [
-                        add_terms[k].replace(
-                            j, "variable_headers['" + str(j) + "']"
-                        )
+                        add_terms[k].replace(j, "variable_headers['" + str(j) + "']")
                         for k in range(0, len(add_terms))
                     ]
                 model.set_additional_terms(
                     [
-                        eval(
-                            m, GLOBAL_FUNCS, {"variable_headers": variable_headers}
-                        )
+                        eval(m, GLOBAL_FUNCS, {"variable_headers": variable_headers})
                         for m in add_terms
                     ]
                 )
@@ -217,6 +251,8 @@ class PysmoPolyTrainer(PysmoTrainer):
 
 
 class PysmoRBFTrainer(PysmoTrainer):
+    """Train a radial basis functional surrogate model."""
+
     # model_type will be this with the basis function prepended, separated by a space
     base_model_type = "rbf"
 
@@ -267,7 +303,9 @@ class PysmoRBFTrainer(PysmoTrainer):
     def _get_metrics(self, model) -> Dict:
         return {"R2": model.R2, "RMSE": model.rsme}
 
+
 class PysmoKrigingTrainer(PysmoTrainer):
+    """Train a Kriging surrogate model."""
 
     CONFIG = PysmoTrainer.CONFIG()
 
@@ -279,7 +317,7 @@ class PysmoKrigingTrainer(PysmoTrainer):
             description="Choice of whether numerical gradients are used in Kriging model training."
             "Determines choice of optimization algorithm: Basinhopping (False) or BFGS (True)."
             "Using the numerical gradient option leads to quicker (but in complex cases possible sub-optimal)"
-                        " convergence",
+            " convergence",
         ),
     )
 
@@ -302,18 +340,24 @@ class PysmoKrigingTrainer(PysmoTrainer):
             pysmo_input,
             numerical_gradients=self.config.numerical_gradients,
             regularization=self.config.regularization,
-            fname=self._get_output_filename(output=output_label)
+            fname=self._get_output_filename(output=output_label),
         )
 
     def _get_metrics(self, model):
-        return {"RMSE": model.training_rmse, "R2":  model.training_R2}
+        return {"RMSE": model.training_rmse, "R2": model.training_R2}
 
 
 class PysmoSurrogate(SurrogateBase):
+    """PySMO surrogate model API."""
+
     def __init__(
-        self, trained_surrogates: SurrogateTrainingResults, input_labels, output_labels, input_bounds=None
+        self,
+        trained_surrogates: TrainedSurrogate,
+        input_labels,
+        output_labels,
+        input_bounds=None,
     ):
-        """A PySMO surrogate model.
+        """Create PySMO surrogate model.
 
         Args:
             trained_surrogates: Results of training surrogates.
@@ -323,11 +367,10 @@ class PysmoSurrogate(SurrogateBase):
         """
         super().__init__(input_labels, output_labels, input_bounds)
         self._trained = trained_surrogates
+        self._trained.input_labels, self._trained.input_bounds = input_labels, input_bounds
 
     def evaluate_surrogate(self, inputs: pd.DataFrame) -> pd.DataFrame:
-        """
-        Method to method to evaluate the ALAMO surrogate model at a set of user
-        provided values.
+        """Evaluate the surrogate model at a set of user-provided values.
 
         Args:
            inputs: pandas DataFrame
@@ -370,112 +413,23 @@ class PysmoSurrogate(SurrogateBase):
         def pysmo_rule(b, o):
             in_vars = block.input_vars_as_dict()
             out_vars = block.output_vars_as_dict()
-            return out_vars[o] == self._trained.get_result(o).model.generate_expression(list(in_vars.values()))
+            return out_vars[o] == self._trained.get_result(o).model.generate_expression(
+                list(in_vars.values())
+            )
 
         block.pysmo_constraint = Constraint(output_set, rule=pysmo_rule)
 
-    def save(self, stream):
-        """
-        Save an instance of this surrogate to the provided output stream so the model can be used later.
+    def save(self, stream: io.TextIOBase):
+        """Save this surrogate to the provided output stream so the model can be used later.
 
         Args:
-           stream: IO.TextIO
-              This is the python stream like a file object or StringIO that will be used
-              to serialize the surrogate object. This method writes a string
-              of json data to the stream.
+           stream: Output stream for serialized surrogate object.
+
+        Returns:
+            None
         """
-
-        def str_conv(xyz):
-            return [str(k) for k in xyz]
-
-        class MyEncoder:
-            def default(self, obj):
-                encoded_attr = [
-                    "final_polynomial_order",
-                    "multinomials",
-                    "optimal_weights_array",
-                    "extra_terms_feature_vector",
-                    "additional_term_expressions",
-                    "regression_data_columns",
-                    "errors",
-                    "centres",
-                    "x_data_columns",
-                    "x_data_min",
-                    "x_data_max",
-                    "basis_function",
-                    "self.sigma",
-                    "y_data_min",
-                    "y_data_max",
-                    "weights",
-                    "sigma",
-                    "regularization_parameter",
-                    "R2",
-                    "rmse",
-                    "optimal_weights",
-                    "optimal_p",
-                    "optimal_mean",
-                    "optimal_variance",
-                    "regularization_parameter",
-                    "optimal_covariance_matrix",
-                    "covariance_matrix_inverse",
-                    "optimal_y_mu",
-                    "training_R2",
-                    "training_rmse",
-                    "x_data",
-                    "x_data_scaled",
-                ]
-                model_dict = {}
-                dictn_attr = {}
-                dictn_attr_type = {}
-                for i in vars(obj):
-                    if i in encoded_attr:
-                        if isinstance(getattr(obj, i), (str, int, float, dict)):
-                            dictn_attr[i] = getattr(obj, i)
-                            dictn_attr_type[i] = "str"
-                        elif isinstance(getattr(obj, i), np.ndarray):
-                            dictn_attr[i] = getattr(obj, i).tolist()
-                            dictn_attr_type[i] = "numpy"
-                        elif isinstance(getattr(obj, i), (pd.Series, pd.DataFrame)):
-                            dictn_attr[i] = getattr(obj, i).to_json(orient="index")
-                            dictn_attr_type[i] = "pandas"
-                        elif isinstance(
-                            getattr(obj, i),
-                            (
-                                pc.base.param._ParamData,
-                                pc.base.param.Param,
-                                pc.expr.numeric_expr.NPV_ProductExpression,
-                                pc.expr.numeric_expr.NPV_DivisionExpression,
-                            ),
-                        ):
-                            dictn_attr[i] = to_json(getattr(obj, i), return_dict=True)
-                            dictn_attr_type[i] = "pyomo"
-                        elif isinstance(getattr(obj, i), list):
-                            dictn_attr[i] = str_conv(getattr(obj, i))
-                            dictn_attr_type[i] = "list"
-                    else:
-                        # print(i, getattr(obj, i))
-                        pass
-
-                model_dict["attr"] = dictn_attr
-                model_dict["map"] = dictn_attr_type
-
-                return model_dict
-
-        dict_of_models = {}
-        for output_label in self._output_labels:
-            dict_of_models[output_label] = MyEncoder().default(
-                self._trained.get_result(output_label).model
-            )
-
-        return json.dump(
-            {
-                "model_encoding": dict_of_models,
-                "input_labels": self._input_labels,
-                "output_labels": self._output_labels,
-                "input_bounds": self._input_bounds,
-                "surrogate_type": self._trained.model_type,
-            }, stream
-        )
+        # All custom serialization is done by the class provided to json.dump
+        json.dump(self._trained, stream, cls=TrainedSurrogateEncoder)
 
     @classmethod
     def load(cls, stream):
@@ -487,112 +441,246 @@ class PysmoSurrogate(SurrogateBase):
               This is the python stream containing the data required to load the surrogate.
               This is often, but does not need to be a string of json data.
 
-        Returns: an instance of the derived class or None if it failed to load
+        Returns:
+            An instance of the derived class or None if it failed to load
         """
+        try:
+            json_obj = json.load(stream, object_pairs_hook=TrainedSurrogateDecoder.decode_pairs)
+            obj = PysmoSurrogate(
+                trained_surrogates=json_obj[TSEBase.MODEL_KEY],
+                input_labels=json_obj[TSEBase.INPUT_KEY],
+                output_labels=json_obj[TSEBase.OUTPUT_KEY],
+                input_bounds=json_obj[TSEBase.BOUNDS_KEY]
+            )
+        except JSONDecodeError as err:
+            obj = None
+            _log.error(f"Error decoding surrogate model (stream={stream}): {err}")
+        return obj
 
-        def str_conv_back(xyz, p):
-            list_idx_vars = [p._data[i].local_name for i in p._data.keys()]
-            list_vars = ['p["' + str(i) + '"]' for i in p.keys()]
-            pyomo_vars_expr = xyz
-            for i in range(0, len(list_idx_vars)):
-                pyomo_vars_expr = [
-                    var_name.replace(list_idx_vars[i], list_vars[i])
-                    for var_name in pyomo_vars_expr
-                ]
-            #  return [eval(r, {}, {"p":p}) for r in pyomo_vars_expr]
-            return pyomo_vars_expr
 
-        def str_deserialize(v):
-            return v
+# Serialization and deserialization classes
+# ------------------------------------------
 
-        def list_deserialize(v):
-            return v
+class TSEBase:
+    # top-level keys shared by encoder/decoder classes
+    MODEL_KEY = "model_encoding"
+    INPUT_KEY = "input_labels"
+    OUTPUT_KEY = "output_labels"
+    BOUNDS_KEY = "input_bounds"
+    TYPE_KEY = "surrogate_type"
+    MODEL_ATTR_KEY = "attr"
+    MODEL_MAP_KEY = "map"
 
-        def numpy_deserialize(v):
-            return np.array(v)
 
-        def pandas_deserialize(v):
-            return pd.read_json(v, orient="index")
+class TrainedSurrogateEncoder(JSONEncoder, TSEBase):
+    # Attributes to encode
+    attrs = {
+        "final_polynomial_order",
+        "multinomials",
+        "optimal_weights_array",
+        "extra_terms_feature_vector",
+        "additional_term_expressions",
+        "regression_data_columns",
+        "errors",
+        "centres",
+        "x_data_columns",
+        "x_data_min",
+        "x_data_max",
+        "basis_function",
+        "self.sigma",
+        "y_data_min",
+        "y_data_max",
+        "weights",
+        "sigma",
+        "regularization_parameter",
+        "R2",
+        "rmse",
+        "optimal_weights",
+        "optimal_p",
+        "optimal_mean",
+        "optimal_variance",
+        "regularization_parameter",
+        "optimal_covariance_matrix",
+        "covariance_matrix_inverse",
+        "optimal_y_mu",
+        "training_R2",
+        "training_rmse",
+        "x_data",
+        "x_data_scaled",
+    }
 
-        switcher = {
-            "numpy": numpy_deserialize,
-            "pandas": pandas_deserialize,
-            "str": str_deserialize,
-            "list": list_deserialize,
-        }
+    def default(self, obj):
+        if isinstance(obj, TrainedSurrogate):
+            return self._encode_surrogate(obj)
+        return super().default(obj)
 
-        class PolyDeserializer(pr.PolynomialRegression):
-            def __init__(self, dictionary, dictionary_map):
-                super().__init__(dictionary, dictionary_map)
-                for k, v in dictionary.items():
-                    if k not in [
-                        "feature_list",
-                        "extra_terms_feature_vector",
-                        "additional_term_expressions",
-                    ]:
-                        setattr(self, k, switcher.get(dictionary_map[k])(v))
-                    else:
-                        pass
-                p = Param(self.regression_data_columns, mutable=True, initialize=0)
-                p.index_set().construct()
-                p.construct()
-                setattr(self, "feature_list", p)
-                setattr(
-                    self,
-                    "extra_terms_feature_vector",
-                    list(self.feature_list[i] for i in self.regression_data_columns),
-                )
-                list_terms = str_conv_back(dictionary["additional_term_expressions"], p)
-                setattr(
-                    self,
-                    "additional_term_expressions",
-                    [eval(m, GLOBAL_FUNCS, {"p": p}) for m in list_terms],
-                )
+    def _encode_surrogate(self, obj):
+        """Encode the trained surrogate for all outputs.
+        """
+        models_enc = {o: self._encode_model(obj.get_result(o).model) for o in obj.output_labels}
+        return {
+                self.MODEL_KEY: models_enc,
+                self.INPUT_KEY: obj.input_labels,
+                self.OUTPUT_KEY: obj.output_labels,
+                self.BOUNDS_KEY: obj.input_bounds,
+                self.TYPE_KEY: obj.model_type,
+            }
 
-        class RbfDeserializer(rbf.RadialBasisFunctions):
-            def __init__(self, dictionary, dictionary_map):
-                for k, v in dictionary.items():
-                    setattr(self, k, switcher.get(dictionary_map[k])(v))
+    def _encode_model(self, model):
+        """Encode the surrogate model for a single output.
+        """
+        attr_values, attr_types = {}, {}
+        # Walk through all attributes in the model that are also in self.attrs
+        for name, val in ((v, getattr(model, v)) for v in vars(model) if v in self.attrs):
+            attr_values[name], attr_types[name] = self._encode_attr(val)
+        return {self.MODEL_ATTR_KEY: attr_values, self.MODEL_MAP_KEY: attr_types}
 
-        class KrigingDeserializer(krg.KrigingModel):
-            def __init__(self, dictionary, dictionary_map):
-                for k, v in dictionary.items():
-                    setattr(self, k, switcher.get(dictionary_map[k])(v))
-
-        class PysmoDeserializer:
-            def __init__(self, dt_in):
-                model_type = dt_in["surrogate_type"]
-                self.results = SurrogateTrainingResults(model_type=model_type)
-                for output_label, enc in dt_in["model_encoding"].items():
-                    if model_type == "poly":
-                        deser_class = PolyDeserializer
-                    elif model_type.endswith("rbf"):
-                        deser_class = RbfDeserializer
-                    elif model_type == "kriging":
-                        deser_class = KrigingDeserializer
-                    else:
-                        raise ValueError(f"Could not deserialize unknown model type '{model_type}'")
-                    result = SurrogateTrainingResult()
-                    result.model = deser_class(enc["attr"], enc["map"])
-                    self.results.add_result(output_label, result)
-
-        data_string = json.load(stream)
-        input_labels = data_string["input_labels"]
-        output_labels = data_string["output_labels"]
-
-        # Need to convert list of bounds to tuples. Need to check for NoneType first
-        if data_string["input_bounds"] is None:
-            input_bounds = None
+    @staticmethod
+    def _encode_attr(value):
+        if isinstance(value, np.ndarray):
+            return value.tolist(), "numpy"
+        elif isinstance(value, (pd.Series, pd.DataFrame)):
+            return value.to_json(orient="index"), "pandas"
+        elif isinstance(
+                value,
+                (
+                        pc.base.param._ParamData,
+                        pc.base.param.Param,
+                        pc.expr.numeric_expr.NPV_ProductExpression,
+                        pc.expr.numeric_expr.NPV_DivisionExpression,
+                ),
+        ):
+            return to_json(value, return_dict=True), "pyomo"
+        elif isinstance(value, list):
+            return [str(k) for k in value], "list"
         else:
-            input_bounds = {}
-            for k, v in data_string["input_bounds"].items():
-                input_bounds[k] = tuple(v)
+            return value, "str"
 
-        deser_results = PysmoDeserializer(data_string).results
 
-        return PysmoSurrogate(
-            trained_surrogates=deser_results,
-            input_labels=input_labels,
-            output_labels=output_labels,
-            input_bounds=input_bounds,
-        )
+class TrainedSurrogateDecoder(TSEBase):
+    """Decode a surrogate that was encoded into JSON by :class:`TrainedSurrogateEncoder`.
+    """
+
+    # TODO: Need to test/debug all these methods
+
+    @classmethod
+    def decode_pairs(cls, pairs):
+        d = {}
+        model_json, model_type = None, None
+        for key, value in pairs:
+            if key == cls.MODEL_KEY:
+                model_json = value
+            elif key == cls.TYPE_KEY:
+                model_type = value
+            elif key == cls.BOUNDS_KEY:
+                # convert list values into tuples
+                d[key] = {k: tuple(v) for k, v in value.items()}
+            else:
+                d[key] = json.loads(value)
+        if model_json is None:
+            raise JSONDecodeError(f"Missing key '{cls.MODEL_KEY}' in JSON object, so no model to decode",
+                                  doc="", pos=0)
+        if model_type is None:
+            raise JSONDecodeError(f"Missing key '{cls.TYPE_KEY}' in JSON object, so type of model is unknown",
+                                  doc="", pos=0)
+        # choose decoder for model type
+        base_type = model_type.split(" ")[-1]  # for "<foo> rbf" types, picks out 'rbf'
+        try:
+            model_decoder = getattr(cls, f"_decode_{base_type}_model")
+        except AttributeError:
+            raise JSONDecodeError(f"No decoder found for model type '{base_type}'")
+        # decode model
+        raw = json.loads(model_json)  # get it into a dict we can use
+        trained = TrainedSurrogate(model_type)
+        for output_label, model_json in raw.items():
+            attrs, mapping = model_json[cls.MODEL_ATTR_KEY], model_json[cls.MODEL_MAP_KEY]
+            surr_mod = model_decoder(model_type, attrs, mapping)
+            result = SurrogateTrainingResult()
+            result.model = surr_mod
+            # TODO: Did we save the metrics??
+            trained.add_result(output_label, result)
+        d[cls.MODEL_KEY] = trained
+        # return decoded dict
+        return d
+
+    @classmethod
+    def _decode_poly_model(cls, type_, attr, mapping):
+        # Construct model with minimal arguments necessary
+        orig_data = cls.pd_decode(attr["original_data"])
+        regr_data = cls.pd_decode(attr["regression_data"])
+        max_order = int(attr["max_polynomial_order"])
+        model = pr.PolynomialRegression(orig_data, regr_data, max_order)
+        # Set model attributes from saved attributes
+        for k, v in attr.items():
+            if k not in [
+                "feature_list",
+                "extra_terms_feature_vector",
+                "additional_term_expressions",
+            ]:
+                type_ = mapping[k]
+                setattr(model, k, cls.decoders.get(type_, cls.null_decode)(v))
+        p = Param(model.regression_data_columns, mutable=True, initialize=0)
+        p.index_set().construct()
+        p.construct()
+        model.feature_list = p
+        model.extra_terms_feature_vector = list(model.feature_list[i] for i in model.regression_data_columns)
+        # Re-create function objects from additional terms
+        list_terms = cls._poly_decode_vars(attr["additional_term_expressions"], p)
+        model.additional_term_expressions = [eval(m, GLOBAL_FUNCS, {"p": p}) for m in list_terms]
+        # Done: return new model
+        return model
+
+    @staticmethod
+    def _poly_decode_vars(xyz, p):
+        """Decode the variables in a polynomial expression.
+        """
+        list_idx_vars = [p._data[i].local_name for i in p._data.keys()]
+        list_vars = ['p["' + str(i) + '"]' for i in p.keys()]
+        pyomo_vars_expr = xyz
+        for i in range(0, len(list_idx_vars)):
+            pyomo_vars_expr = [
+                var_name.replace(list_idx_vars[i], list_vars[i])
+                for var_name in pyomo_vars_expr
+            ]
+        #  return [eval(r, {}, {"p":p}) for r in pyomo_vars_expr]
+        return pyomo_vars_expr
+
+    @classmethod
+    def _decode_rbf_model(cls, type_, attr, mapping):
+        # Construct model with minimal arguments necessary
+        # TODO: extract arguments from 'attr'
+        rbf_type = type_.split(" ")[0]  # get type of RBF model
+        model = rbf.RadialBasisFunctions() #XXX
+        # Set model attributes from saved attributes
+        for k, v in attr.items():
+            setattr(model, k, cls.decoders.get(mapping[k], cls.null_decode)(v))
+        # Done: return new model
+        return model
+
+    @classmethod
+    def _decode_kriging_model(cls, type_, attr, mapping):
+        # Construct model with minimal arguments necessary
+        # TODO: extract arguments from 'attr'
+        model = krg.KrigingModel()  # XXX
+        # Set model attributes from saved attributes
+        for k, v in attr.items():
+            setattr(model, k, cls.decoders.get(mapping[k], cls.null_decode)(v))
+        # Done: return new model
+        return model
+
+    # Helper methods for decoding Pandas and Numpy
+
+    @staticmethod
+    def pd_decode(v):
+        return pd.read_json(v, orient="index")
+
+    @staticmethod
+    def numpy_decode(v):
+        return np.array(v)
+
+    @staticmethod
+    def null_decode(v):
+        return v
+
+    decoders = {"numpy": numpy_decode, "pandas": pd_decode}
+
