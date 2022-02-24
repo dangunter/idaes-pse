@@ -42,27 +42,23 @@ _log = idaeslog.getLogger(__name__)
 GLOBAL_FUNCS = {"sin": sin, "cos": cos, "log": log, "exp": exp}
 
 
-class SurrogateResult:
-    def __init__(self, values: Dict = None, model_type=None):
-        self.result = {
-            "model type": model_type or "",
-            "No. outputs": 0,
-            "models": {},
-            "metrics": {"RMSE": {}, "R2": {}},
-            "pysmo_results": {},
-        }
-        if values:
-            self.result.update(values)
+class SurrogateTrainingResult:
+    def __init__(self):
+        self.metrics = {}
+        self.model = None
+        self.expression_str = ""
 
-    def set_num_outputs(self, n):
-        self.result["No. outputs"] = n
+class SurrogateTrainingResults:
+    def __init__(self, model_type=""):
+        self._data = {}
+        self.model_type = model_type
+        self.num_outputs = 0
 
-    def __getitem__(self, item):
-        return self.result[item]
+    def add_result(self, output_name, result):
+        self._data[output_name] = result
 
-    def __setitem__(self, key, value):
-        self.result[key] = value
-
+    def get_result(self, output_name) -> SurrogateTrainingResult:
+        return self._data[output_name]
 
 class PysmoTrainer(SurrogateTrainer):
     """Base class for Pysmo surrogate training classes.
@@ -70,21 +66,17 @@ class PysmoTrainer(SurrogateTrainer):
     # Initialize with configuration for base SurrogateTrainer
     CONFIG = SurrogateTrainer.CONFIG()
 
+    # Subclasses must override this with a specific surrogate model type name
+    model_type = "base"
+
     def __init__(self, **settings):
         super().__init__(**settings)
-        self._result = None
+        self._results = SurrogateTrainingResults(model_type=self.model_type)
 
-    def train_surrogate(self) -> "PysmoTrainer":
-        result = self._create_result()
-        result.set_num_outputs(len(self._output_labels))
-        self._training_main_loop(result)
-        self._result = result
-        return self
-
-    def _create_result(self) -> SurrogateResult:
-        """Subclasses must override this to return a properly initialized result object.
-        """
-        pass
+    def train_surrogate(self) -> SurrogateTrainingResults:
+        self._results.num_outputs = len(self._output_labels)
+        self._training_main_loop()
+        return self._results
 
     def _create_model(self, pysmo_input: pd.DataFrame, output_label: str) -> Union[pr.PolynomialRegression, rbf.RadialBasisFunctions, krg.KrigingModel]:
         """Subclasses must override this and make it return a PySMO model.
@@ -96,7 +88,7 @@ class PysmoTrainer(SurrogateTrainer):
         """
         return {}
 
-    def _training_main_loop(self, result) -> SurrogateResult:
+    def _training_main_loop(self):
         for i, output_label in enumerate(self._output_labels):
             # Create input dataframe
             pysmo_input = pd.concat(
@@ -109,24 +101,25 @@ class PysmoTrainer(SurrogateTrainer):
             # Create and train model
             model = self._create_model(pysmo_input, output_label)
             model.training()
-            # Document results
-            result["pysmo_results"][output_label] = model
+            # Store results
+            result = SurrogateTrainingResult()
+            result.model = model
             variable_names = list(model.get_feature_vector().values())
-            result["models"][output_label] = str(model.generate_expression(variable_names))
-            for metric, value in self._get_metrics(model).items():
-                result["metrics"][metric][output_label] = value
+            result.expression_str = str(model.generate_expression(variable_names))
+            result.metrics = self._get_metrics(model)
+            self._results.add_result(output_label, result)
             # Log the status
             _log.info(f"Model for output {output_label} trained successfully")
 
-        return result
-
-    def _get_output_filename(self, model_type="", output=""):
-        return f"pysmo_{model_type}_{output}.pickle"
+    def _get_output_filename(self, output=""):
+        return f"pysmo_{self.model_type}_{output}.pickle"
 
 
 class PysmoPolyTrainer(PysmoTrainer):
     """Train a polynomial model.
     """
+    model_type = "poly"
+
     CONFIG = PysmoTrainer.CONFIG()
 
     CONFIG.declare(
@@ -184,9 +177,6 @@ class PysmoPolyTrainer(PysmoTrainer):
     def __init__(self, **settings):
         super().__init__(**settings)
 
-    def _create_result(self):
-        return SurrogateResult(model_type="poly")
-
     def _create_model(self, pysmo_input, output_label):
         model = pr.PolynomialRegression(
                 pysmo_input,
@@ -196,7 +186,7 @@ class PysmoPolyTrainer(PysmoTrainer):
                 solution_method=self.config.solution_method,
                 multinomials=self.config.multinomials,
                 number_of_crossvalidations=self.config.number_of_crossvalidations,
-                fname=self._get_output_filename(model_type="poly", output=output_label)
+                fname=self._get_output_filename(output=output_label)
         )
         variable_headers = model.get_feature_vector()
         if self.config.extra_features is not None:
@@ -223,13 +213,12 @@ class PysmoPolyTrainer(PysmoTrainer):
         return model
 
     def _get_metrics(self, model):
-        return {
-            "RMSE": model.errors["MSE"] ** 0.5,
-            "R2": model.errors["R2"]
-        }
+        return {"RMSE": model.errors["MSE"] ** 0.5, "R2": model.errors["R2"]}
 
 
 class PysmoRBFTrainer(PysmoTrainer):
+    # model_type will be this with the basis function prepended, separated by a space
+    base_model_type = "rbf"
 
     CONFIG = SurrogateTrainer.CONFIG()
 
@@ -263,9 +252,7 @@ class PysmoRBFTrainer(PysmoTrainer):
 
     def __init__(self, **settings):
         super().__init__(**settings)
-
-    def _create_result(self):
-        return SurrogateResult(model_type="rbf")
+        self.model_type = f"{self.config.basis_function} {self.base_model_type}"
 
     def _create_model(self, pysmo_input, output_label):
         model = rbf.RadialBasisFunctions(
@@ -273,10 +260,12 @@ class PysmoRBFTrainer(PysmoTrainer):
             basis_function=self.config.basis_function,
             solution_method=self.config.solution_method,
             regularization=self.config.regularization,
-            fname=self._get_output_filename(model_type="rbf", output=output_label),
+            fname=self._get_output_filename(output=output_label),
         )
         return model
 
+    def _get_metrics(self, model) -> Dict:
+        return {"R2": model.R2, "RMSE": model.rsme}
 
 class PysmoKrigingTrainer(PysmoTrainer):
 
@@ -287,7 +276,7 @@ class PysmoKrigingTrainer(PysmoTrainer):
         ConfigValue(
             default=True,
             domain=Bool,
-            description="Coice of whether numerical gradients are used in kriging model training."
+            description="Choice of whether numerical gradients are used in Kriging model training."
             "Determines choice of optimization algorithm: Basinhopping (False) or BFGS (True)."
             "Using the numerical gradient option leads to quicker (but in complex cases possible sub-optimal)"
                         " convergence",
@@ -308,37 +297,32 @@ class PysmoKrigingTrainer(PysmoTrainer):
         super().__init__(**settings)
         self._result = None
 
-    def _create_result(self):
-        return SurrogateResult(model_type="kriging")
-
     def _create_model(self, pysmo_input, output_label):
         return krg.KrigingModel(
             pysmo_input,
             numerical_gradients=self.config.numerical_gradients,
             regularization=self.config.regularization,
-            fname=self._get_output_filename(model_type="kriging", output=output_label)
+            fname=self._get_output_filename(output=output_label)
         )
 
     def _get_metrics(self, model):
-        return {
-            "R2":  model.training_R2
-        }
+        return {"RMSE": model.training_rmse, "R2":  model.training_R2}
 
 
 class PysmoSurrogate(SurrogateBase):
     def __init__(
-        self, surrogate_expressions, input_labels, output_labels, input_bounds=None
+        self, trained_surrogates: SurrogateTrainingResults, input_labels, output_labels, input_bounds=None
     ):
         """A PySMO surrogate model.
 
         Args:
-            surrogate_expressions:
+            trained_surrogates: Results of training surrogates.
             input_labels:
             output_labels:
             input_bounds:
         """
         super().__init__(input_labels, output_labels, input_bounds)
-        self._surrogate_expressions = surrogate_expressions
+        self._trained = trained_surrogates
 
     def evaluate_surrogate(self, inputs: pd.DataFrame) -> pd.DataFrame:
         """
@@ -361,19 +345,16 @@ class PysmoSurrogate(SurrogateBase):
 
         for i in range(inputdata.shape[0]):
             row_data = inputdata[i, :].reshape(1, len(self._input_labels))
-            for o in range(len(self._output_labels)):
-                o_name = self._output_labels[o]
-                outputs[i, o] = self._surrogate_expressions._results["pysmo_results"][
-                    self._output_labels[o]
-                ].predict_output(row_data)
+            for output_label in self._output_labels:
+                result = self._trained.get_result(output_label)
+                outputs[i, output_label] = result.model.predict_output(row_data)
 
         return pd.DataFrame(
             data=outputs, index=inputs.index, columns=self._output_labels
         )
 
     def populate_block(self, block, additional_options=None):
-        """
-        Method to populate a Pyomo Block with surrogate model constraints.
+        """Populate a Pyomo Block with surrogate model constraints.
 
         Args:
             block: Pyomo Block component to be populated with constraints.
@@ -389,9 +370,7 @@ class PysmoSurrogate(SurrogateBase):
         def pysmo_rule(b, o):
             in_vars = block.input_vars_as_dict()
             out_vars = block.output_vars_as_dict()
-            return out_vars[o] == self._surrogate_expressions._results["pysmo_results"][
-                o
-            ].generate_expression(list(in_vars.values()))
+            return out_vars[o] == self._trained.get_result(o).model.generate_expression(list(in_vars.values()))
 
         block.pysmo_constraint = Constraint(output_set, rule=pysmo_rule)
 
@@ -483,9 +462,9 @@ class PysmoSurrogate(SurrogateBase):
                 return model_dict
 
         dict_of_models = {}
-        for j in self._output_labels:
-            dict_of_models[j] = MyEncoder().default(
-                self._surrogate_expressions._results["pysmo_results"][j]
+        for output_label in self._output_labels:
+            dict_of_models[output_label] = MyEncoder().default(
+                self._trained.get_result(output_label).model
             )
 
         return json.dump(
@@ -494,7 +473,7 @@ class PysmoSurrogate(SurrogateBase):
                 "input_labels": self._input_labels,
                 "output_labels": self._output_labels,
                 "input_bounds": self._input_bounds,
-                "surrogate_type": self._surrogate_expressions._results["model type"],
+                "surrogate_type": self._trained.model_type,
             }, stream
         )
 
@@ -582,39 +561,20 @@ class PysmoSurrogate(SurrogateBase):
 
         class PysmoDeserializer:
             def __init__(self, dt_in):
-                self._results = {}
-                self._results["model type"] = dt_in["surrogate_type"]
-                self._results["pysmo_results"] = {}
-                output_list = list(dt_in["model_encoding"])
-                for i in range(0, len(output_list)):
-                    if self._results["model type"] == "poly":
-                        self._results["pysmo_results"][
-                            output_list[i]
-                        ] = PolyDeserializer(
-                            dt_in["model_encoding"][output_list[i]]["attr"],
-                            dt_in["model_encoding"][output_list[i]]["map"],
-                        )
-                    elif self._results["model type"] in [
-                        "linear rbf",
-                        "cubic rbf",
-                        "gaussian rbf",
-                        "mq rbf",
-                        "imq rbf",
-                        "spline rbf",
-                    ]:
-                        self._results["pysmo_results"][
-                            output_list[i]
-                        ] = RbfDeserializer(
-                            dt_in["model_encoding"][output_list[i]]["attr"],
-                            dt_in["model_encoding"][output_list[i]]["map"],
-                        )
-                    elif self._results["model type"] == "kriging":
-                        self._results["pysmo_results"][
-                            output_list[i]
-                        ] = KrigingDeserializer(
-                            dt_in["model_encoding"][output_list[i]]["attr"],
-                            dt_in["model_encoding"][output_list[i]]["map"],
-                        )
+                model_type = dt_in["surrogate_type"]
+                self.results = SurrogateTrainingResults(model_type=model_type)
+                for output_label, enc in dt_in["model_encoding"].items():
+                    if model_type == "poly":
+                        deser_class = PolyDeserializer
+                    elif model_type.endswith("rbf"):
+                        deser_class = RbfDeserializer
+                    elif model_type == "kriging":
+                        deser_class = KrigingDeserializer
+                    else:
+                        raise ValueError(f"Could not deserialize unknown model type '{model_type}'")
+                    result = SurrogateTrainingResult()
+                    result.model = deser_class(enc["attr"], enc["map"])
+                    self.results.add_result(output_label, result)
 
         data_string = json.load(stream)
         input_labels = data_string["input_labels"]
@@ -628,10 +588,10 @@ class PysmoSurrogate(SurrogateBase):
             for k, v in data_string["input_bounds"].items():
                 input_bounds[k] = tuple(v)
 
-        model_deserialized = PysmoDeserializer(data_string)
+        deser_results = PysmoDeserializer(data_string).results
 
         return PysmoSurrogate(
-            surrogate_expressions=model_deserialized,
+            trained_surrogates=deser_results,
             input_labels=input_labels,
             output_labels=output_labels,
             input_bounds=input_bounds,
