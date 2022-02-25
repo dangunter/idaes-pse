@@ -389,9 +389,9 @@ class PysmoSurrogate(SurrogateBase):
 
         for i in range(inputdata.shape[0]):
             row_data = inputdata[i, :].reshape(1, len(self._input_labels))
-            for output_label in self._output_labels:
+            for j, output_label in enumerate(self._output_labels):
                 result = self._trained.get_result(output_label)
-                outputs[i, output_label] = result.model.predict_output(row_data)
+                outputs[i, j] = result.model.predict_output(row_data)
 
         return pd.DataFrame(
             data=outputs, index=inputs.index, columns=self._output_labels
