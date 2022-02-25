@@ -15,7 +15,8 @@
 # stdlib
 import io
 import json
-from json import JSONEncoder, JSONDecoder, JSONDecodeError
+from json import JSONEncoder, JSONDecodeError
+import logging
 from typing import Dict, Union
 
 # third-party
@@ -45,9 +46,6 @@ _log = idaeslog.getLogger(__name__)
 # Global variables
 # ----------------
 GLOBAL_FUNCS = {"sin": sin, "cos": cos, "log": log, "exp": exp}
-
-# Classes
-# -------
 
 
 class SurrogateTrainingResult:
@@ -367,7 +365,10 @@ class PysmoSurrogate(SurrogateBase):
         """
         super().__init__(input_labels, output_labels, input_bounds)
         self._trained = trained_surrogates
-        self._trained.input_labels, self._trained.input_bounds = input_labels, input_bounds
+        self._trained.input_labels, self._trained.input_bounds = (
+            input_labels,
+            input_bounds,
+        )
 
     def evaluate_surrogate(self, inputs: pd.DataFrame) -> pd.DataFrame:
         """Evaluate the surrogate model at a set of user-provided values.
@@ -445,12 +446,14 @@ class PysmoSurrogate(SurrogateBase):
             An instance of the derived class or None if it failed to load
         """
         try:
-            json_obj = json.load(stream, object_pairs_hook=TrainedSurrogateDecoder.decode_pairs)
+            json_obj = json.load(
+                stream, object_pairs_hook=TrainedSurrogateDecoder.decode_pairs
+            )
             obj = PysmoSurrogate(
                 trained_surrogates=json_obj[TSEBase.MODEL_KEY],
                 input_labels=json_obj[TSEBase.INPUT_KEY],
                 output_labels=json_obj[TSEBase.OUTPUT_KEY],
-                input_bounds=json_obj[TSEBase.BOUNDS_KEY]
+                input_bounds=json_obj[TSEBase.BOUNDS_KEY],
             )
         except JSONDecodeError as err:
             obj = None
@@ -461,6 +464,7 @@ class PysmoSurrogate(SurrogateBase):
 # Serialization and deserialization classes
 # ------------------------------------------
 
+
 class TSEBase:
     # top-level keys shared by encoder/decoder classes
     MODEL_KEY = "model_encoding"
@@ -470,7 +474,7 @@ class TSEBase:
     TYPE_KEY = "surrogate_type"
     MODEL_ATTR_KEY = "attr"
     MODEL_MAP_KEY = "map"
-
+    MODEL_METRICS_KEY = "errors"
 
 class TrainedSurrogateEncoder(JSONEncoder, TSEBase):
     # Attributes to encode
@@ -515,51 +519,59 @@ class TrainedSurrogateEncoder(JSONEncoder, TSEBase):
         return super().default(obj)
 
     def _encode_surrogate(self, obj):
-        """Encode the trained surrogate for all outputs.
-        """
-        models_enc = {o: self._encode_model(obj.get_result(o).model) for o in obj.output_labels}
+        """Encode the trained surrogate for all outputs."""
+        models_enc = {
+            o: self._encode_model(obj.get_result(o).model) for o in obj.output_labels
+        }
         return {
-                self.MODEL_KEY: models_enc,
-                self.INPUT_KEY: obj.input_labels,
-                self.OUTPUT_KEY: obj.output_labels,
-                self.BOUNDS_KEY: obj.input_bounds,
-                self.TYPE_KEY: obj.model_type,
-            }
+            self.MODEL_KEY: models_enc,
+            self.INPUT_KEY: obj.input_labels,
+            self.OUTPUT_KEY: obj.output_labels,
+            self.BOUNDS_KEY: obj.input_bounds,
+            self.TYPE_KEY: obj.model_type,
+        }
 
     def _encode_model(self, model):
-        """Encode the surrogate model for a single output.
-        """
+        """Encode the surrogate model for a single output."""
         attr_values, attr_types = {}, {}
         # Walk through all attributes in the model that are also in self.attrs
-        for name, val in ((v, getattr(model, v)) for v in vars(model) if v in self.attrs):
-            attr_values[name], attr_types[name] = self._encode_attr(val)
+        for name, val in (
+            (v, getattr(model, v)) for v in vars(model) if v in self.attrs
+        ):
+            e = self._encode_attr(val)
+            if e is not None:
+                attr_values[name], attr_types[name] = self._encode_attr(val)
         return {self.MODEL_ATTR_KEY: attr_values, self.MODEL_MAP_KEY: attr_types}
 
     @staticmethod
     def _encode_attr(value):
+        def is_pyomo_value(v):
+            return isinstance(
+                v,
+                (
+                    pc.base.param._ParamData,
+                    pc.base.param.Param,
+                    pc.expr.numeric_expr.NPV_ProductExpression,
+                    pc.expr.numeric_expr.NPV_DivisionExpression,
+                ),
+            )
+
         if isinstance(value, np.ndarray):
             return value.tolist(), "numpy"
         elif isinstance(value, (pd.Series, pd.DataFrame)):
             return value.to_json(orient="index"), "pandas"
-        elif isinstance(
-                value,
-                (
-                        pc.base.param._ParamData,
-                        pc.base.param.Param,
-                        pc.expr.numeric_expr.NPV_ProductExpression,
-                        pc.expr.numeric_expr.NPV_DivisionExpression,
-                ),
-        ):
+        elif is_pyomo_value(value):
             return to_json(value, return_dict=True), "pyomo"
         elif isinstance(value, list):
-            return [str(k) for k in value], "list"
+            if len(value) > 0 and is_pyomo_value(value[0]):
+                return None  # skip
+            return [str(v) for v in value], "list"
         else:
             return value, "str"
 
 
 class TrainedSurrogateDecoder(TSEBase):
-    """Decode a surrogate that was encoded into JSON by :class:`TrainedSurrogateEncoder`.
-    """
+    """Decode a surrogate that was encoded into JSON by :class:`TrainedSurrogateEncoder`."""
 
     # TODO: Need to test/debug all these methods
 
@@ -568,6 +580,8 @@ class TrainedSurrogateDecoder(TSEBase):
         d = {}
         model_json, model_type = None, None
         for key, value in pairs:
+            if _log.isEnabledFor(logging.DEBUG):
+                _log.debug(f"JSON decode pairs. key={key}, value={value}")
             if key == cls.MODEL_KEY:
                 model_json = value
             elif key == cls.TYPE_KEY:
@@ -576,13 +590,16 @@ class TrainedSurrogateDecoder(TSEBase):
                 # convert list values into tuples
                 d[key] = {k: tuple(v) for k, v in value.items()}
             else:
-                d[key] = json.loads(value)
+                d[key] = value
         if model_json is None:
-            raise JSONDecodeError(f"Missing key '{cls.MODEL_KEY}' in JSON object, so no model to decode",
-                                  doc="", pos=0)
+            # If this is not present, assume that we are not at the outer level, so stop here
+            return d
         if model_type is None:
-            raise JSONDecodeError(f"Missing key '{cls.TYPE_KEY}' in JSON object, so type of model is unknown",
-                                  doc="", pos=0)
+            raise JSONDecodeError(
+                f"Missing key '{cls.TYPE_KEY}' in JSON object, so type of model is unknown",
+                doc="",
+                pos=0,
+            )
         # choose decoder for model type
         base_type = model_type.split(" ")[-1]  # for "<foo> rbf" types, picks out 'rbf'
         try:
@@ -590,14 +607,13 @@ class TrainedSurrogateDecoder(TSEBase):
         except AttributeError:
             raise JSONDecodeError(f"No decoder found for model type '{base_type}'")
         # decode model
-        raw = json.loads(model_json)  # get it into a dict we can use
+        _log.info(f"Decode surrogate. type={model_type}")
         trained = TrainedSurrogate(model_type)
-        for output_label, model_json in raw.items():
-            attrs, mapping = model_json[cls.MODEL_ATTR_KEY], model_json[cls.MODEL_MAP_KEY]
-            surr_mod = model_decoder(model_type, attrs, mapping)
+        for output_label, model_data in model_json.items():
+            surr_mod = model_decoder(model_type, model_data[cls.MODEL_ATTR_KEY], model_data[cls.MODEL_MAP_KEY])
             result = SurrogateTrainingResult()
             result.model = surr_mod
-            # TODO: Did we save the metrics??
+            result.metrics = model_data[cls.MODEL_ATTR_KEY][cls.MODEL_METRICS_KEY]
             trained.add_result(output_label, result)
         d[cls.MODEL_KEY] = trained
         # return decoded dict
@@ -606,11 +622,17 @@ class TrainedSurrogateDecoder(TSEBase):
     @classmethod
     def _decode_poly_model(cls, type_, attr, mapping):
         # Construct model with minimal arguments necessary
-        orig_data = cls.pd_decode(attr["original_data"])
-        regr_data = cls.pd_decode(attr["regression_data"])
-        max_order = int(attr["max_polynomial_order"])
+        columns = attr["regression_data_columns"]
+        orig_data = pd.DataFrame({c: list(range(10)) for c in columns}) # cls.pd_decode(attr["original_data"])
+        regr_data = pd.DataFrame({c: list(range(10)) for c in columns}) # cls.pd_decode(attr["regression_data"])
+        max_order = 1 # int(attr["final_polynomial_order"])
+        _log.debug(f"Constructing initial PolynomialRegression surrogate. "
+                   f"size(original data)={orig_data.size}, "
+                   f"size(regression data)={regr_data.size},"
+                   f"max_order={max_order}")
         model = pr.PolynomialRegression(orig_data, regr_data, max_order)
         # Set model attributes from saved attributes
+        _log.debug("Setting attributes on constructed surrogate model")
         for k, v in attr.items():
             if k not in [
                 "feature_list",
@@ -618,22 +640,29 @@ class TrainedSurrogateDecoder(TSEBase):
                 "additional_term_expressions",
             ]:
                 type_ = mapping[k]
-                setattr(model, k, cls.decoders.get(type_, cls.null_decode)(v))
+                decoder = decoders.get(type_, null_decode)
+                if _log.isEnabledFor(logging.DEBUG):
+                    _log.debug(f"Decode attribute. decoder={decoder}, attr={k}:{type_}")
+                decoded_value = decoder(v)
+                setattr(model, k, decoded_value)
         p = Param(model.regression_data_columns, mutable=True, initialize=0)
         p.index_set().construct()
         p.construct()
         model.feature_list = p
-        model.extra_terms_feature_vector = list(model.feature_list[i] for i in model.regression_data_columns)
+        model.extra_terms_feature_vector = list(
+            model.feature_list[i] for i in model.regression_data_columns
+        )
         # Re-create function objects from additional terms
         list_terms = cls._poly_decode_vars(attr["additional_term_expressions"], p)
-        model.additional_term_expressions = [eval(m, GLOBAL_FUNCS, {"p": p}) for m in list_terms]
+        model.additional_term_expressions = [
+            eval(m, GLOBAL_FUNCS, {"p": p}) for m in list_terms
+        ]
         # Done: return new model
         return model
 
     @staticmethod
     def _poly_decode_vars(xyz, p):
-        """Decode the variables in a polynomial expression.
-        """
+        """Decode the variables in a polynomial expression."""
         list_idx_vars = [p._data[i].local_name for i in p._data.keys()]
         list_vars = ['p["' + str(i) + '"]' for i in p.keys()]
         pyomo_vars_expr = xyz
@@ -650,10 +679,10 @@ class TrainedSurrogateDecoder(TSEBase):
         # Construct model with minimal arguments necessary
         # TODO: extract arguments from 'attr'
         rbf_type = type_.split(" ")[0]  # get type of RBF model
-        model = rbf.RadialBasisFunctions() #XXX
+        model = rbf.RadialBasisFunctions()  # XXX
         # Set model attributes from saved attributes
         for k, v in attr.items():
-            setattr(model, k, cls.decoders.get(mapping[k], cls.null_decode)(v))
+            setattr(model, k, decoders.get(mapping[k], null_decode)(v))
         # Done: return new model
         return model
 
@@ -664,23 +693,26 @@ class TrainedSurrogateDecoder(TSEBase):
         model = krg.KrigingModel()  # XXX
         # Set model attributes from saved attributes
         for k, v in attr.items():
-            setattr(model, k, cls.decoders.get(mapping[k], cls.null_decode)(v))
+            setattr(model, k, decoders.get(mapping[k], null_decode)(v))
         # Done: return new model
         return model
 
-    # Helper methods for decoding Pandas and Numpy
+# Helper methods for decoding Pandas and Numpy
 
-    @staticmethod
-    def pd_decode(v):
-        return pd.read_json(v, orient="index")
 
-    @staticmethod
-    def numpy_decode(v):
-        return np.array(v)
+def pd_decode(v):
+    return pd.read_json(v, orient="index")
 
-    @staticmethod
-    def null_decode(v):
-        return v
 
-    decoders = {"numpy": numpy_decode, "pandas": pd_decode}
+def numpy_decode(v):
+    return np.array(v)
 
+
+def null_decode(v):
+    return v
+
+
+decoders = {
+    "numpy": numpy_decode,
+    "pandas": pd_decode
+}
