@@ -1,6 +1,6 @@
 
 export class Paper {
-    constructor(app) {
+    constructor(app, frozen) {
         this._app = app;
         var standard = joint.shapes.standard;
         var width = 800;
@@ -23,6 +23,7 @@ export class Paper {
             drawGrid: false,
             interactive: true
         });
+        this._frozen = frozen;
 
         this._paperScroller = new joint.ui.PaperScroller({
             paper: this._paper,
@@ -44,7 +45,9 @@ export class Paper {
         $('#idaes-canvas').css({ height: stream_table.offsetHeight });
         $("#idaes-canvas")[0].append(self._paperScroller.render().el);
 
-        self.preSetupRegisterEvents();
+        if (!this._frozen) {
+            self.preSetupRegisterEvents();
+        }
     }
 
     get graph() {
@@ -257,7 +260,13 @@ export class Paper {
      */
     setup(model) {
         this._graph.fromJSON(model);
-        this.postSetupRegisterEvents();
+        if (this._frozen) {
+            this._app.informUser(0, 'Interactivity is disabled', 5);
+            $('.joint-paper svg').css('pointer-events', 'none');
+        }
+        else {
+            this.postSetupRegisterEvents();
+        }
     }
     
 };

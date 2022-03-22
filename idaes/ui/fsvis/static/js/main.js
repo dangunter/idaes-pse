@@ -25,7 +25,7 @@ import { JointJsCellConfig } from './cell_config.js';
  */
 export class App {
     constructor (flowsheetId) {
-        this.paper = new Paper(this);
+        this.paper = new Paper(this, true);
         const url = `/fs?id=${ flowsheetId }`;
         $.ajax({url: url, datatype: 'json'})
             .done((model) => {
@@ -48,6 +48,7 @@ export class App {
         var jjCellConfig = new JointJsCellConfig(model);
         var processed_model = jjCellConfig.processRoutingConfig();
         this.paper.setup(processed_model);
+
     }
 
     /**
