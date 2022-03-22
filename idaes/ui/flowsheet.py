@@ -144,7 +144,8 @@ class FlowsheetSerializer:
         Args:
             flowsheet: The flowsheet to serialize
             name: The name of the flowsheet (also called its 'id' in some contexts)
-            validate: If True, validate that the flowsheet is a reaonsable IDAES model, first
+            validate: If True, validate that the flowsheet is a reasonable IDAES model, first
+
         Raises:
             ValueError if validation is on and flowsheet is found to be invalid
         """
@@ -455,9 +456,9 @@ class FlowsheetSerializer:
         )
 
         # Puts df in this format for easier parsing in the javascript table:
-        # {'index': ["('Liq', 'benzene')", "('Liq', 'toluene')", "('Liq', 'hydrogen')", "('Liq', 'methane')", "('Vap', 'benzene')", "('Vap', 'toluene')", "('Vap', 'hydrogen')", "('Vap', 'methane')", 'temperature', 'pressure'],
-        # 'columns': ['s03', 's04', 's05', 's06', 's08', 's09', 's10'],
-        # 'data': [[0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], [298.15, 298.15, 298.15, 298.15, 298.15, 298.15, 298.15], [101325.0, 101325.0, 101325.0, 101325.0, 101325.0, 101325.0, 101325.0]]}
+        # {'index': ["('Liq', 'benzene')", "('Liq', 'toluene')",  ..., 'temperature', 'pressure'],
+        # 'columns': ['s03', 's04', ..., 's09', 's10'],
+        # 'data': [[0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], ...]} ; one list per-stream, #lists=#items in index
         self._out_json["model"]["stream_table"] = self._stream_table_df.to_dict("split")
 
         self._out_json["model"]["id"] = self.name
