@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+message Model {
+    CoreMetadata meta = 1;
+    CoreData core = 2;
+}
+
+// Metadata for a serialized model
+message CoreMetadata {
+    string format_version = 1;
+    float created = 2;
+    string author = 3;
+    repeated string coauthors = 4;
+}
+
+// Data for a serialized model
+message CoreData {
+    // Blocks
+    repeated Block blocks = 1;
+    // Suffixes
+    repeated Suffix suffixes = 2;
+    // List of type names in the model
+    repeated string types = 3;
+    // Connectivity information
+    repeated Connection conn = 4;
+    // Model config
+    repeated ConfigEntry config = 5;
+}
+enum BlockType {
+    BASE = 0;
+    VAR = 1;
+    BOOL = 2;
+    PARAM = 3;
+    SUFFIX = 4;
+}
+
+enum SuffixDirection {
+    LOCAL = 0;
+    IMPORT = 1;
+    EXPORT = 2;
+    IMPORT_EXPORT = 3;
+}
+
+enum SuffixDatatype {
+    FLOAT = 0;
+    INT = 1;
+    NONE = 2; // ANY
+}
+
+message Block {
+    BlockType subtype = 1;
+    // Local (not fully qualified) name
+    string name = 2;
+    // Index into the 'types' array
+    uint32 type_index = 3;
+    // Block index of parent block
+    int32 parent_index = 4;
+    // Index of the variable string=s, float=f
+    string var_index_s = 5;
+    float var_index_f = 6;
+    // Value
+    double value = 7;
+    // Flag for fixed value
+    bool fixed = 8;
+    // Flag for stale value
+    bool stale = 9;
+    // Lower bound or empty
+    bool has_lb = 10;
+    double lb = 11;
+    // Upper bound
+    bool has_ub = 12;
+    double ub = 13;
+}
+
+message Suffix {
+    // Local (not fully qualified) name
+    string name = 1;
+    // Index into the 'types' array
+    uint32 type_index = 2;
+    // Block index of parent block
+    int32 parent_index = 3;
+    // Suffix info
+    SuffixDirection direction = 4;
+    SuffixDatatype datatype = 5;
+    map <string, int32> int_data = 6;
+    map <string, double> float_data = 7;
+    map <string, string> any_data = 8; 
+}
+// Model connectivity
+message Connection {
+    // Index for the arc block
+    uint32 arc_index = 1;
+    // Index of the source block
+    uint32 src_index = 2;
+    // Index of the destination block
+    uint32 dst_index = 3;
+}
+
+// Configuration value {key: value} for a block
+message ConfigEntry {
+    // Block index
+    uint32 block_index = 1;
+    // Configuration key
+    string key = 2;
+    // Value is JSON-encoded
+    string val = 3;
+}
