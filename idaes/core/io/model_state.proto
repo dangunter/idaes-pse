@@ -73,18 +73,20 @@ message Block {
 }
 
 message Suffix {
+    // Block index (since picked from main array)
+    uint32 idx = 1;
     // Local (not fully qualified) name
-    string name = 1;
+    string name = 2;
     // Index into the 'types' array
-    uint32 type_index = 2;
+    uint32 type_index = 3;
     // Block index of parent block
-    int32 parent_index = 3;
+    int32 parent_index = 4;
     // Suffix info
-    SuffixDirection direction = 4;
-    SuffixDatatype datatype = 5;
-    map <string, int32> int_data = 6;
-    map <string, double> float_data = 7;
-    map <string, string> any_data = 8; 
+    SuffixDirection direction = 5;
+    SuffixDatatype datatype = 6;
+    map <string, int32> int_data = 7;
+    map <string, double> float_data = 8;
+    map <string, string> any_data = 9; 
 }
 // Model connectivity
 message Connection {

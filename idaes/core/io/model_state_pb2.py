@@ -7,51 +7,50 @@ from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x11model_state.proto"=\n\x05Model\x12\x1b\n\x04meta\x18\x01 \x01(\x0b\x32\r.CoreMetadata\x12\x17\n\x04\x63ore\x18\x02 \x01(\x0b\x32\t.CoreData"Z\n\x0c\x43oreMetadata\x12\x16\n\x0e\x66ormat_version\x18\x01 \x01(\t\x12\x0f\n\x07\x63reated\x18\x02 \x01(\x02\x12\x0e\n\x06\x61uthor\x18\x03 \x01(\t\x12\x11\n\tcoauthors\x18\x04 \x03(\t"\x85\x01\n\x08\x43oreData\x12\x16\n\x06\x62locks\x18\x01 \x03(\x0b\x32\x06.Block\x12\x19\n\x08suffixes\x18\x02 \x03(\x0b\x32\x07.Suffix\x12\r\n\x05types\x18\x03 \x03(\t\x12\x19\n\x04\x63onn\x18\x04 \x03(\x0b\x32\x0b.Connection\x12\x1c\n\x06\x63onfig\x18\x05 \x03(\x0b\x32\x0c.ConfigEntry"\xeb\x01\n\x05\x42lock\x12\x1b\n\x07subtype\x18\x01 \x01(\x0e\x32\n.BlockType\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\ntype_index\x18\x03 \x01(\r\x12\x14\n\x0cparent_index\x18\x04 \x01(\x05\x12\x13\n\x0bvar_index_s\x18\x05 \x01(\t\x12\x13\n\x0bvar_index_f\x18\x06 \x01(\x02\x12\r\n\x05value\x18\x07 \x01(\x01\x12\r\n\x05\x66ixed\x18\x08 \x01(\x08\x12\r\n\x05stale\x18\t \x01(\x08\x12\x0e\n\x06has_lb\x18\n \x01(\x08\x12\n\n\x02lb\x18\x0b \x01(\x01\x12\x0e\n\x06has_ub\x18\x0c \x01(\x08\x12\n\n\x02ub\x18\r \x01(\x01"\x96\x03\n\x06Suffix\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x12\n\ntype_index\x18\x02 \x01(\r\x12\x14\n\x0cparent_index\x18\x03 \x01(\x05\x12#\n\tdirection\x18\x04 \x01(\x0e\x32\x10.SuffixDirection\x12!\n\x08\x64\x61tatype\x18\x05 \x01(\x0e\x32\x0f.SuffixDatatype\x12&\n\x08int_data\x18\x06 \x03(\x0b\x32\x14.Suffix.IntDataEntry\x12*\n\nfloat_data\x18\x07 \x03(\x0b\x32\x16.Suffix.FloatDataEntry\x12&\n\x08\x61ny_data\x18\x08 \x03(\x0b\x32\x14.Suffix.AnyDataEntry\x1a.\n\x0cIntDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\x1a\x30\n\x0e\x46loatDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a.\n\x0c\x41nyDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"E\n\nConnection\x12\x11\n\tarc_index\x18\x01 \x01(\r\x12\x11\n\tsrc_index\x18\x02 \x01(\r\x12\x11\n\tdst_index\x18\x03 \x01(\r"<\n\x0b\x43onfigEntry\x12\x13\n\x0b\x62lock_index\x18\x01 \x01(\r\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\x0b\n\x03val\x18\x03 \x01(\t*?\n\tBlockType\x12\x08\n\x04\x42\x41SE\x10\x00\x12\x07\n\x03VAR\x10\x01\x12\x08\n\x04\x42OOL\x10\x02\x12\t\n\x05PARAM\x10\x03\x12\n\n\x06SUFFIX\x10\x04*G\n\x0fSuffixDirection\x12\t\n\x05LOCAL\x10\x00\x12\n\n\x06IMPORT\x10\x01\x12\n\n\x06\x45XPORT\x10\x02\x12\x11\n\rIMPORT_EXPORT\x10\x03*.\n\x0eSuffixDatatype\x12\t\n\x05\x46LOAT\x10\x00\x12\x07\n\x03INT\x10\x01\x12\x08\n\x04NONE\x10\x02\x62\x06proto3'
-)
+
+
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11model_state.proto\"=\n\x05Model\x12\x1b\n\x04meta\x18\x01 \x01(\x0b\x32\r.CoreMetadata\x12\x17\n\x04\x63ore\x18\x02 \x01(\x0b\x32\t.CoreData\"Z\n\x0c\x43oreMetadata\x12\x16\n\x0e\x66ormat_version\x18\x01 \x01(\t\x12\x0f\n\x07\x63reated\x18\x02 \x01(\x02\x12\x0e\n\x06\x61uthor\x18\x03 \x01(\t\x12\x11\n\tcoauthors\x18\x04 \x03(\t\"\x85\x01\n\x08\x43oreData\x12\x16\n\x06\x62locks\x18\x01 \x03(\x0b\x32\x06.Block\x12\x19\n\x08suffixes\x18\x02 \x03(\x0b\x32\x07.Suffix\x12\r\n\x05types\x18\x03 \x03(\t\x12\x19\n\x04\x63onn\x18\x04 \x03(\x0b\x32\x0b.Connection\x12\x1c\n\x06\x63onfig\x18\x05 \x03(\x0b\x32\x0c.ConfigEntry\"\xeb\x01\n\x05\x42lock\x12\x1b\n\x07subtype\x18\x01 \x01(\x0e\x32\n.BlockType\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\ntype_index\x18\x03 \x01(\r\x12\x14\n\x0cparent_index\x18\x04 \x01(\x05\x12\x13\n\x0bvar_index_s\x18\x05 \x01(\t\x12\x13\n\x0bvar_index_f\x18\x06 \x01(\x02\x12\r\n\x05value\x18\x07 \x01(\x01\x12\r\n\x05\x66ixed\x18\x08 \x01(\x08\x12\r\n\x05stale\x18\t \x01(\x08\x12\x0e\n\x06has_lb\x18\n \x01(\x08\x12\n\n\x02lb\x18\x0b \x01(\x01\x12\x0e\n\x06has_ub\x18\x0c \x01(\x08\x12\n\n\x02ub\x18\r \x01(\x01\"\xa3\x03\n\x06Suffix\x12\x0b\n\x03idx\x18\x01 \x01(\r\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x12\n\ntype_index\x18\x03 \x01(\r\x12\x14\n\x0cparent_index\x18\x04 \x01(\x05\x12#\n\tdirection\x18\x05 \x01(\x0e\x32\x10.SuffixDirection\x12!\n\x08\x64\x61tatype\x18\x06 \x01(\x0e\x32\x0f.SuffixDatatype\x12&\n\x08int_data\x18\x07 \x03(\x0b\x32\x14.Suffix.IntDataEntry\x12*\n\nfloat_data\x18\x08 \x03(\x0b\x32\x16.Suffix.FloatDataEntry\x12&\n\x08\x61ny_data\x18\t \x03(\x0b\x32\x14.Suffix.AnyDataEntry\x1a.\n\x0cIntDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\x1a\x30\n\x0e\x46loatDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a.\n\x0c\x41nyDataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"E\n\nConnection\x12\x11\n\tarc_index\x18\x01 \x01(\r\x12\x11\n\tsrc_index\x18\x02 \x01(\r\x12\x11\n\tdst_index\x18\x03 \x01(\r\"<\n\x0b\x43onfigEntry\x12\x13\n\x0b\x62lock_index\x18\x01 \x01(\r\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\x0b\n\x03val\x18\x03 \x01(\t*?\n\tBlockType\x12\x08\n\x04\x42\x41SE\x10\x00\x12\x07\n\x03VAR\x10\x01\x12\x08\n\x04\x42OOL\x10\x02\x12\t\n\x05PARAM\x10\x03\x12\n\n\x06SUFFIX\x10\x04*G\n\x0fSuffixDirection\x12\t\n\x05LOCAL\x10\x00\x12\n\n\x06IMPORT\x10\x01\x12\n\n\x06\x45XPORT\x10\x02\x12\x11\n\rIMPORT_EXPORT\x10\x03*.\n\x0eSuffixDatatype\x12\t\n\x05\x46LOAT\x10\x00\x12\x07\n\x03INT\x10\x01\x12\x08\n\x04NONE\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "model_state_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'model_state_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
-    DESCRIPTOR._options = None
-    _globals["_SUFFIX_INTDATAENTRY"]._options = None
-    _globals["_SUFFIX_INTDATAENTRY"]._serialized_options = b"8\001"
-    _globals["_SUFFIX_FLOATDATAENTRY"]._options = None
-    _globals["_SUFFIX_FLOATDATAENTRY"]._serialized_options = b"8\001"
-    _globals["_SUFFIX_ANYDATAENTRY"]._options = None
-    _globals["_SUFFIX_ANYDATAENTRY"]._serialized_options = b"8\001"
-    _globals["_BLOCKTYPE"]._serialized_start = 1092
-    _globals["_BLOCKTYPE"]._serialized_end = 1155
-    _globals["_SUFFIXDIRECTION"]._serialized_start = 1157
-    _globals["_SUFFIXDIRECTION"]._serialized_end = 1228
-    _globals["_SUFFIXDATATYPE"]._serialized_start = 1230
-    _globals["_SUFFIXDATATYPE"]._serialized_end = 1276
-    _globals["_MODEL"]._serialized_start = 21
-    _globals["_MODEL"]._serialized_end = 82
-    _globals["_COREMETADATA"]._serialized_start = 84
-    _globals["_COREMETADATA"]._serialized_end = 174
-    _globals["_COREDATA"]._serialized_start = 177
-    _globals["_COREDATA"]._serialized_end = 310
-    _globals["_BLOCK"]._serialized_start = 313
-    _globals["_BLOCK"]._serialized_end = 548
-    _globals["_SUFFIX"]._serialized_start = 551
-    _globals["_SUFFIX"]._serialized_end = 957
-    _globals["_SUFFIX_INTDATAENTRY"]._serialized_start = 813
-    _globals["_SUFFIX_INTDATAENTRY"]._serialized_end = 859
-    _globals["_SUFFIX_FLOATDATAENTRY"]._serialized_start = 861
-    _globals["_SUFFIX_FLOATDATAENTRY"]._serialized_end = 909
-    _globals["_SUFFIX_ANYDATAENTRY"]._serialized_start = 911
-    _globals["_SUFFIX_ANYDATAENTRY"]._serialized_end = 957
-    _globals["_CONNECTION"]._serialized_start = 959
-    _globals["_CONNECTION"]._serialized_end = 1028
-    _globals["_CONFIGENTRY"]._serialized_start = 1030
-    _globals["_CONFIGENTRY"]._serialized_end = 1090
+  DESCRIPTOR._options = None
+  _globals['_SUFFIX_INTDATAENTRY']._options = None
+  _globals['_SUFFIX_INTDATAENTRY']._serialized_options = b'8\001'
+  _globals['_SUFFIX_FLOATDATAENTRY']._options = None
+  _globals['_SUFFIX_FLOATDATAENTRY']._serialized_options = b'8\001'
+  _globals['_SUFFIX_ANYDATAENTRY']._options = None
+  _globals['_SUFFIX_ANYDATAENTRY']._serialized_options = b'8\001'
+  _globals['_BLOCKTYPE']._serialized_start=1105
+  _globals['_BLOCKTYPE']._serialized_end=1168
+  _globals['_SUFFIXDIRECTION']._serialized_start=1170
+  _globals['_SUFFIXDIRECTION']._serialized_end=1241
+  _globals['_SUFFIXDATATYPE']._serialized_start=1243
+  _globals['_SUFFIXDATATYPE']._serialized_end=1289
+  _globals['_MODEL']._serialized_start=21
+  _globals['_MODEL']._serialized_end=82
+  _globals['_COREMETADATA']._serialized_start=84
+  _globals['_COREMETADATA']._serialized_end=174
+  _globals['_COREDATA']._serialized_start=177
+  _globals['_COREDATA']._serialized_end=310
+  _globals['_BLOCK']._serialized_start=313
+  _globals['_BLOCK']._serialized_end=548
+  _globals['_SUFFIX']._serialized_start=551
+  _globals['_SUFFIX']._serialized_end=970
+  _globals['_SUFFIX_INTDATAENTRY']._serialized_start=826
+  _globals['_SUFFIX_INTDATAENTRY']._serialized_end=872
+  _globals['_SUFFIX_FLOATDATAENTRY']._serialized_start=874
+  _globals['_SUFFIX_FLOATDATAENTRY']._serialized_end=922
+  _globals['_SUFFIX_ANYDATAENTRY']._serialized_start=924
+  _globals['_SUFFIX_ANYDATAENTRY']._serialized_end=970
+  _globals['_CONNECTION']._serialized_start=972
+  _globals['_CONNECTION']._serialized_end=1041
+  _globals['_CONFIGENTRY']._serialized_start=1043
+  _globals['_CONFIGENTRY']._serialized_end=1103
 # @@protoc_insertion_point(module_scope)

@@ -3,86 +3,117 @@ Main API.
 
 Usage:
 
-        
+    # `my_model` contains IDAES/Pyomo model
 
-    To save only selected parts,
-    save_state("my-model.pbuf", my_model, select=StatePart.VALUE | StatePart.SUFFIX)
+    # SAVE
+    sf = StateFile("my-model.binpb")
+    sf.save(my_model)
 
-    To load/save the *entire* model, use the thin wrapper around `pickle`:
-    save_model("my-model.pickle", model)
-    my_model = load_model("my-model.pickle")
+    # LOAD
+    sf = StateFile("my-model.binpb")
+    sf.load_into(my_model)
 """
+
+from io import FileIO
+import gzip
+from pathlib import Path
+from warnings import warn
+
+# third=party
 from pyomo.environ import Block
-from .common import (
-    DataFile, 
-    DataFormat,
-    FileTools,
-    ModelState,
-    StateOption
-)
-    
-# TODO: Implement
-def save_state(
-    output_file: DataFile,
-    model: Block,
-    data_format: DataFormat = None,
-    options: int = StateOption.VALUE,
-    gz: bool = False
-) -> ModelState:
-    """Save model state to a file or stream
+from .common import DataFormat, ModelState, StateOption
+from idaes.logger import getLogger
+
+# package
+from . import pbuf, jsondata
+
+
+_log = getLogger(__name__)
+
+
+class StateFile:
+
+    SER_FN = {
+        DataFormat.PROTOBUF: pbuf.serialize,
+        DataFormat.JSON: jsondata.serialize,
+    }
+    DESER_FN = {
+        DataFormat.PROTOBUF: pbuf.deserialize_into,
+        DataFormat.JSON: jsondata.deserialize_into,
+    }
+
+    def __init__(
+        self,
+        f: str | Path | FileIO,
+        fmt: DataFormat = None,
+        options: int = StateOption.VALUE,
+        gz: bool = False,
+    ):
+        self._fp = None
+        if isinstance(f, Path):
+            self._path = f
+        elif isinstance(f, str):
+            self._path = Path(f)
+        else:
+            self._path, self._fp = Path(getattr(f, "name", "")), f
+        self._opt, self._gz, self._fmt = options, gz, fmt
+        # infer format, if not given
+        if self._fmt is None:
+            suffix = self._path.suffix
+            if suffix == ".binpb":
+                self._fmt = DataFormat.PROTOBUF
+            elif suffix == ".json":
+                self._fmt = DataFormat.JSON
+            else:
+                self._fmt = DataFormat.JSON
+                warn(
+                    f"Save file extension '{suffix}' not '.binpb' or '.json'. "
+                    f"Defaulting to {self._fmt.value} output."
+                )
+
+    def save(self, model):
+        if self._fp is None:
+            self._open_file("wb")
+        model_state = ModelState(model, self._opt)
+        serialize = self.SER_FN[self._fmt]
+        buf = serialize(model_state)
+        try:
+            self._fp.write(buf)
+        finally:
+            self._fp = None
+
+    def load_into(self, model):
+        if self._fp is None:
+            self._open_file("rb")
+        try:
+            buf = self._fp.read()
+        finally:
+            self._fp = None
+        self.DESER_FN[self._fmt](buf, model)
+
+    def _open_file(self, mode):
+        if self._gz:
+            if self._path.suffix != ".gz":
+                self._add_suffix(self._path, ".gz")
+            self._fp = gzip.open(self._path, mode=mode)
+        else:
+            self._fp = open(self._path, mode=mode)
+
+
+def to_json(f, model, gz: bool = False):
+    StateFile(f, fmt=DataFormat.JSON, gz=gz).save(model)
+
+
+def as_dict(model: Block, **build_options) -> dict:
+    """Serialize the model as a JSON-ready dictionary.
 
     Args:
-        fp (DataFile): _description_
-        model (Block): _description_
-        data_format (DataFormat, optional): _description_. Defaults to None.
-        options (int, optional): _description_. Defaults to StateOption.VALUE.
+        model: The model to serialize to a dict
+        build_options: Keyword options for `ModelCore.build()`
 
     Returns:
-        ModelState: _description_
+        Python dictionary representation of the model serializer object
     """
-    fp = FileTools.open(output_file, is_output=True, gz=gz)
-    # format model contents to buffer
-    if data_format == DataFormat.PROTOBUF:
-        t0 = time.time()
-        buf = _protobuf_bytes(mstate)
-        t1 = time.time()
-        if _log.isEnabledFor(logging.DEBUG):
-            _log.debug(f"protobuf dump time={(t1 - t0):.3g}s")
-        mode, encoding = "wb", None
-    else:
-        t0 = time.time()
-        buf = json.dumps(mstate.as_dict(), check_circular=False, **dump_kw)
-        t1 = time.time()
-        if _log.isEnabledFor(logging.DEBUG):
-            _log.debug(f"json dump time={(t1 - t0):.3g}s")
-        mode = "wt"
-    # open output
-    if isinstance(fp, str):
-        fp = Path(fp)
-    if isinstance(fp, Path):
-        if gz:
-            fp = _add_suffix(fp, ".gz")
-            f = gzip.open(fp, mode)
-        else:
-            f = fp.open(mode, encoding=encoding)
-    else:
-        f = fp
-    # write buffer to output
-    f.write(buf)
-    f.close()
-
-
-# TODO: Implement
-def load_state(fp: DataFile, data_format: DataFormat = None) -> ModelState:
-    pass
-
-
-
-# TODO: Implement
-def load_model(fp: Datafile) -> Block
-
-
-# TODO: Implement
-def save_model(fp: DataFile, model: Block):
-    pass
-
+    m = ModelState()
+    m.core.build(model, **build_options)
+    return m.as_dict()
