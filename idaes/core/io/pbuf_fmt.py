@@ -6,10 +6,7 @@ Protobuf model state I/O
 import time
 
 # third-party
-from pyomo.environ import (
-    Suffix,
-    Block
-)
+from pyomo.environ import Suffix, Block
 
 try:
     import ojson as json
@@ -110,77 +107,36 @@ def serialize(model_state: ModelState) -> bytes:
 def deserialize_into(buf: bytes, model: Block):
     pb = pb_model.Model()
     pb.ParseFromString(buf)
-    block_iter = ((b.name, b.parent_idx) for b in pb.core.blocks))
+    block_iter = ((b.name, b.parent_idx) for b in pb.core.blocks)
     block_obj = get_block_obj(model, block_iter)
-    # core
-    # pre-allocate target array since blocks and suffixes interleaved
-    b = [None] * (len(pb.core.blocks) + len(pb.core.suffixes))
-    # all block types except suffixes
-    for block in pb.core.blocks:
-        if block.subtype == pb_model.BASE:
-            item = (block.name, block.type_index, block.parent_index)
-        elif block.subtype in (pb_model.VAR, pb_model.BOOL, pb_model.PARAM):
-            # use string index if non-empty else float
-            if block.var_index_s:
-                var_index = block.var_index_s
-            else:
-                var_index = block.var_index_f
-            if block.subtype == pb_model.VAR:
-                # lower and upper bound values, or None
-                lb = block.lb if block.has_lb else None
-                ub = block.ub if block.has_ub else None
-                item = (
-                    block.name,
-                    block.type_index,
-                    block.parent_index,
-                    var_index,
-                    block.value,
-                    block.fixed,
-                    block.stale,
-                    lb,
-                    ub,
-                )
-            elif block.subtype == pb_model.BOOL:
-                item = (
-                    block.name,
-                    block.type_index,
-                    block.parent_index,
-                    var_index,
-                    block.value,
-                    block.fixed,
-                    block.stale,
-                )
-            else:
-                item = (
-                    block.name,
-                    block.type_index,
-                    block.parent_index,
-                    var_index,
-                    block.value,
-                )
-        b[block.idx] = item
-    # suffix blocks
+    # data (float vars, params, bools)
+    for d in pb.core.blocks:
+        block_type = d.type_index
+        if not Subtypes.is_data(block_type, False):
+            continue
+        # index is either string or float (defined with protobuf 'oneof')
+        vidx = d.var_index_s if d.HasField("var_index_s") else d.var_index_f
+        # retrieve corrsponding Pyomo block object
+        item = block_obj[d.parent_index][vidx]
+        # set values into block object
+        item.value = d.value
+        if block_type == Subtypes.st_var:
+            item.fixed, item.stale = d.fixed, d.stale
+            lb = d.lb if d.has_lb else None
+            ub = d.ub if d.has_ub else None
+            item.bounds = (lb, ub)
+        elif block_type == Subtypes.st_bool:
+            item.fixed, item.stale = d.fixed, d.stale
+        # nothing else to do for param
+    # suffixes
     for sfx in pb.core.suffixes:
-        values = sfx.int_data
-        values.update(sfx.float_data)
-        values.update(sfx.any_data)
-        b[sfx.idx] = (
-            sfx.name,
-            sfx.type_index,
-            sfx.parent_index,
-            sfx.direction,
-            sfx.datatype,
-            values,
-        )
-    # done with core blocks
-    m.core.blocks = b
-    # connection info
-    m.core.conn = [x.arc_index, x.src_index, x.dst_index] for x in pb.core.conn
-    # config dicts
-    c = []
-    for cfg in pb.core.config:
-        val = json.loads(cfg.val)
-        c.append((cfg.block_index, cfg.key, val))
-    m.core.configs = c
-    # done
-    return m
+        item = block_obj[sfx.idx]
+        item.direction, item.datatype = sfx.direction, sfx.datatype
+        item.clear_values()
+        for data_values in (sfx.int_data, sfx.float_data):
+            for k, v in data_values.items():
+                component = block_obj[k]
+                item.set_value(component, v)
+        for k, v in sfx.any_data.items():
+            component = block_obj[k]
+            item.set_value(component, v)

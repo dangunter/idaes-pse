@@ -48,32 +48,37 @@ enum SuffixDatatype {
 }
 
 message Block {
-    BlockType subtype = 1;
+    // Block index
+    uint32 idx = 1;
+    // Subtype of block (except SUFFIX, dealt with as Suffix)
+    BlockType subtype = 2;
     // Local (not fully qualified) name
-    string name = 2;
+    string name = 3;
     // Index into the 'types' array
-    uint32 type_index = 3;
+    uint32 type_index = 4;
     // Block index of parent block
-    int32 parent_index = 4;
+    int32 parent_index = 5;
     // Index of the variable string=s, float=f
-    string var_index_s = 5;
-    float var_index_f = 6;
+    oneof variable_index {
+        string var_index_s = 6;
+        float var_index_f = 7;
+    }
     // Value
-    double value = 7;
+    double value = 8;
     // Flag for fixed value
-    bool fixed = 8;
+    bool fixed = 9;
     // Flag for stale value
-    bool stale = 9;
+    bool stale = 10;
     // Lower bound or empty
-    bool has_lb = 10;
-    double lb = 11;
+    bool has_lb = 11;
+    double lb = 12;
     // Upper bound
-    bool has_ub = 12;
-    double ub = 13;
+    bool has_ub = 13;
+    double ub = 14;
 }
 
 message Suffix {
-    // Block index (since picked from main array)
+    // Block index
     uint32 idx = 1;
     // Local (not fully qualified) name
     string name = 2;

@@ -93,6 +93,7 @@ kwargs = dict(
         "sympy",  # idaes.core.util.expr_doc
         "matplotlib",
         "click>=8",
+        "orjson >= 3.10,<4",  # 2x faster JSON
     ],
     entry_points={
         "console_scripts": [

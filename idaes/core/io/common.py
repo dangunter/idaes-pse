@@ -22,7 +22,7 @@ from pyomo.environ import (
 from pyomo.core.base.param import ParamData
 
 try:
-    import ojson as json
+    import orjson as json
 except ImportError:
     import json
 

@@ -14,7 +14,7 @@ from pyomo.common.config import ConfigDict, ConfigList, ConfigValue
 from pyomo.network import Arc
 
 # package
-from .common import Subtypes, FORMAT_VERSION
+from .common import Subtypes, FORMAT_VERSION, get_block_obj
 from idaes.logger import getLogger
 
 _log = getLogger(__name__)
@@ -303,62 +303,13 @@ class ModelState(pydantic.BaseModel):
     #: Extensions, arbitrary info in form {"type of info": {...info...}}
     ext: dict[str, dict] = {}
 
-    def __init__(self, **kwargs):
+    def __init__(self, model=None, **kwargs):
         super().__init__(**kwargs)
-        # Cached mapping of blocks to objects in a Pyomo model instance,
-        # See `get_block_obj`
-        self._block_obj_cache = {}
+        if model is not None:
+            self.core.build(model)
 
     def as_dict(self):
         return {"meta": dict(self.meta), "core": dict(self.core), "ext": dict(self.ext)}
-
-    def get_block_obj(self, pyomo_model) -> dict[int, Block]:
-        """Get Pyomo block objects for each block in this model.
-
-        Args:
-            pyomo_model: Corresponding Pyomo model
-
-        Returns:
-            Mapping from index in Model.core.block_info to the
-            corresponding Pyomo block object.
-        """
-        # check cache, return existing mapping if found
-        pm_id = id(pyomo_model)
-        block_obj = self._block_obj_cache.get(pm_id, None)
-        if block_obj is not None:
-            return block_obj
-        # create new mapping
-        bi = self.core.blocks
-        block_obj = {0: pyomo_model}
-        for i in range(1, len(bi)):
-            name, _, parent_idx = bi[i]
-            parent_obj = block_obj[parent_idx]
-            if name[-1] == "]":  # indexed block, e.g. 'fs[1]'
-                span_start = name.rfind("[")
-                idx_str = name[span_start + 1 : -1]
-                idx = self._index_from_str(idx_str)
-                block_obj[i] = parent_obj[idx]
-            else:
-                block_obj[i] = getattr(parent_obj, name)
-        # add mapping to cache and return it
-        self._block_obj_cache[pm_id] = block_obj
-        return block_obj
-
-    @staticmethod
-    def _index_from_str(s) -> int | float | str:
-        # quoted string, strip quotes and we're done
-        if s[0] == "'" or s[0] == '"':
-            idx = s[1:-1]
-        else:
-            # try to parse as int, then float
-            try:
-                idx = int(s)
-            except ValueError:
-                try:
-                    idx = float(s)
-                except ValueError:
-                    idx = s  # default is string
-        return idx
 
     def set_values(self, model: Block):
         """Set values in Pyomo `model` from those found in this instance.
@@ -369,7 +320,7 @@ class ModelState(pydantic.BaseModel):
         Returns:
             None
         """
-        block_obj = self.get_block_obj(model)
+        block_obj = get_block_obj(model, self.core.blocks)
         for block_i, block in enumerate(self.core.blocks):
             block_type = block[1]
             if Subtypes.is_data(block_type, False):

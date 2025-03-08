@@ -25,7 +25,7 @@ from .common import DataFormat, ModelState, StateOption
 from idaes.logger import getLogger
 
 # package
-from . import pbuf, jsondata
+from . import json_fmt, pbuf_fmt
 
 
 _log = getLogger(__name__)
@@ -34,12 +34,12 @@ _log = getLogger(__name__)
 class StateFile:
 
     SER_FN = {
-        DataFormat.PROTOBUF: pbuf.serialize,
-        DataFormat.JSON: jsondata.serialize,
+        DataFormat.PROTOBUF: pbuf_fmt.serialize,
+        DataFormat.JSON: json_fmt.serialize,
     }
     DESER_FN = {
-        DataFormat.PROTOBUF: pbuf.deserialize_into,
-        DataFormat.JSON: jsondata.deserialize_into,
+        DataFormat.PROTOBUF: pbuf_fmt.deserialize_into,
+        DataFormat.JSON: json_fmt.deserialize_into,
     }
 
     def __init__(

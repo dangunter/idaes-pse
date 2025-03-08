@@ -27,6 +27,7 @@ def deserialize_into(buf: bytes, model: Block):
         if Subtypes.is_data(block_type, False):
             pidx, vidx = block[2], block[3]
             item = block_obj[pidx][vidx]
+            item.value = block[4]
             if block_type == Subtypes.st_var:
                 item.fixed = block[5]
                 item.stale = block[6]
