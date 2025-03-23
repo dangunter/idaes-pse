@@ -3,7 +3,7 @@ JSON model state I/O
 """
 
 # stdlib
-from typing import Iterable
+from typing import Any, Iterable
 
 # third-party
 from pyomo.environ import Block
@@ -75,6 +75,12 @@ class JsonModelSerializer(ModelSerializerInterface):
     def __init__(self):
         self._m = ModelState()
 
+    def to_str(self) -> str:
+        return json.dumps(self._m.as_dict(), check_circular=False)
+
+    def to_bytes(self) -> bytes:
+        return self.to_str().encode(encoding=ENCODING)
+
     def block(self, e, name, type_i, parent, key, indexed):
         self._m.core.blocks.append(
             (
@@ -145,3 +151,6 @@ class JsonModelSerializer(ModelSerializerInterface):
 
     def arcs(self, arcs: Iterable[tuple[str, int, int]]):
         self._m.core.conn = list(arcs)
+
+    def config(self, index: int, key: str, value: dict[str, Any]):
+        self._m.core.configs.append((index, key, value))

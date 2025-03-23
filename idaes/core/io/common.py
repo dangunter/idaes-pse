@@ -12,7 +12,7 @@ import gzip
 from io import IOBase
 import logging
 from statistics import median
-from typing import Iterable
+from typing import Any, Iterable
 
 # third-party
 import gzip
@@ -41,6 +41,15 @@ FORMAT_VERSION = "0.0.1"
 
 
 class ModelSerializerInterface(ABC):
+
+    @abstractmethod
+    def to_str(self) -> str:
+        pass
+
+    @abstractmethod
+    def to_bytes(self) -> bytes:
+        pass
+
     @abstractmethod
     def block(self, e, name, type_i, parent, key, indexed):
         pass
@@ -81,30 +90,33 @@ class ModelSerializerInterface(ABC):
     ):
         pass
 
+    @abstractmethod
+    def config(self, index: int, key: str, value: dict[str, Any]):
+        pass
 
+
+# Types for data in blocks
 DataTypes = namedtuple("DataTypes", ("IndexedParam", "IndexedVar", "IndexedBooleanVar"))
 DT = DataTypes(IndexedParam, IndexedVar, IndexedBooleanVar)
 
 
 class Builder:
-    def __init__(
-        self,
-        serializer: ModelSerializerInterface,
-        include_suffixes: bool = False,
-        include_conn: bool = False,
-        include_configs: bool = False,
-    ):
+    # Flags for things to `include``
+    SUFFIXES, CONN, CONFIGS = (1 << n for n in range(3))
+    ALL = SUFFIXES | CONN | CONFIGS
+
+    def __init__(self, serializer: ModelSerializerInterface, include: int):
         self._ser = serializer
         self._callbacks = {
             DT.IndexedParam: self._ser.indexed_param,
             DT.IndexedVar: self._ser.indexed_var,
             DT.IndexedBooleanVar: self._ser.indexed_bool,
         }
-        self._suffixes = include_suffixes
-        self._conn = include_conn
+        self._suffixes = bool(include & self.SUFFIXES)
+        self._conn = bool(include & self.CONN)
         if self._conn:
             self._arc_types = {ScalarArc, IndexedArc}
-        self._configs = include_configs
+        self._configs = bool(include & self.CONN)
 
     def build(self, model: Block) -> None:
         comp_arr = [(model, -1)]
@@ -113,28 +125,36 @@ class Builder:
         type_arr = list(DT)
         type_map = {t: i for i, t in enumerate(type_arr)}
 
+        # tracking data structures
         obj_id_map = {}
         obj_name_map = {}
         obj_indexed_name_map = {}
 
-        last_comp = -1
-
-        # extra data structures for optional parts
+        # data structures for optional parts
         if self._suffixes:
             suffixes = []
         if self._conn:
             arcs = {}  # unique streams
 
-        # add blocks (get list of unique types)
-        cp, cs, block_count = 0, len(comp_arr), 0
+        # main loop: until no more objects to process
+        # cp = current position => block index
+        # cs = current size => next block index
+        cp, cs = 0, len(comp_arr)
+        log_dbg = _log.isEnabledFor(logging.DEBUG)  # check once
         while cp < cs:
             obj, parent = comp_arr[cp]
-            cp += 1
+
+            if log_dbg:
+                _log.debug(f"object '{obj.name}' cp={cp} cs={cs} parent={parent}")
 
             obj_id = id(obj)
+
+            # if duplicate, move to next immediately
             if obj_id in obj_id_map:
+                cp += 1
                 continue
-            obj_id_map[obj_id] = block_count
+
+            obj_id_map[obj_id] = cs  # where block will be in list
 
             obj_name = obj.getname()
             obj_fullname = obj.name
@@ -144,7 +164,7 @@ class Builder:
             type_idx = type_map.get(obj_type, None)
             if type_idx is None:
                 type_idx = len(type_arr)
-                type_arr.append(type_idx)
+                type_arr.append(obj_type.__qualname__)
                 type_map[obj_type] = type_idx
 
             if obj_type is Suffix:
@@ -158,68 +178,72 @@ class Builder:
                     )
                 )
             elif self._conn and obj_type in self._arc_types:
-                # arc -> names of parent blocks of src/dst ports
+                # arc -> names o#f parent blocks of src/dst ports
                 arcs[obj_name] = (
                     obj.source.parent_block().name,
                     obj.dest.parent_block().name,
                 )
                 # don't put the arc in the block list
             else:
-                try:
-                    obj_keys = obj.keys()
-                except AttributeError:
-                    obj_keys = [None]
-                cb = None
-                is_component_data = isinstance(obj, ComponentData)
-                indexed, start_block_count = None, block_count
-                # get each indexed item
-                for key in obj_keys:
-                    indexed = not (key is None and is_component_data)
-                    if indexed:
-                        try:
-                            element = obj[key]
-                        except TypeError:  # not subscriptable
-                            continue  # skip
-                    else:
-                        element = obj
-                    if cb is None:
-                        cb = self._callbacks.get(type(element), self._ser.block)
-                        # subsequent iterations, use same callback -> assumes
-                        # all items are of the same type
-                    cb(element, obj_name, type_idx, parent, key, indexed)
+                if not hasattr(obj, "keys"):
+                    # add the object
+                    cb = self._callbacks.get(obj_type, self._ser.block)
+                    cb(obj, obj_name, type_idx, parent, key, False)
                     # put name in map if serializing connectivity or suffixes
                     if self._conn or self._suffixes:
-                        element_name = element.getname(fully_qualified=True)
-                        obj_name_map[element_name] = block_count
-                    # if can have subcomponents, add them
-                    try:
-                        subcomponents = obj.component_objects()
-                        for subobj in subcomponents:
-                            comp_arr.append((subobj, cp))
-                            cs += 1
-                    # no subcomponents; that's ok
-                    except (AttributeError, TypeError):
-                        pass
-                    # block config
-                    if self._configs and isinstance(
-                        getattr(obj, "config", None), ConfigDict
+                        obj_name_map[obj_name] = cp
+                    # add subcomponents (if any)
+                    cs = self._build_add_subcomponents(obj, comp_arr, cp, cs)
+                    # optionally add block configs
+                    if (
+                        self._configs
+                        and hasattr(obj, "config")
+                        and isinstance(obj.config, ConfigDict)
                     ):
-                        for key, config_val in obj.config.items():
-                            cf_val = self._config_val(config_val)
-                            self._ser.config(block_count, key, cf_val)
-                    # done with this block
-                    block_count += 1
-                # suffixes referring to name w/o index refer to all of the
-                # ones we just added in the loop above
-                if self._suffixes and indexed:
-                    obj_indexed_name_map[obj_fullname] = range(
-                        start_block_count, block_count
-                    )
+                        self._build_add_configs(obj, cp)
+                else:
+                    cb = None
+                    # is_component_data = isinstance(obj, ComponentData)
+                    indexed, start_cs, added = None, cs, []
+                    # get each indexed item
+                    for key, element in obj.items():
+                        # add element
+                        if cb is None:
+                            cb = self._callbacks.get(type(element), self._ser.block)
+                            # subsequent iterations, use same callback -> assumes
+                            # all items are of the same type
+                        cb(element, obj_name, type_idx, parent, key, True)
+                        added.append(cs)
+                        # put name in map if serializing connectivity or suffixes
+                        if self._conn or self._suffixes:
+                            elt_name = (
+                                element.getname(fully_qualified=True)
+                                # + "["
+                                # + str(key)
+                                # + "]"
+                            )
+                            obj_name_map[elt_name] = cs
+                        # add subcomponents (if any)
+                        cs = self._build_add_subcomponents(element, comp_arr, cp, cs)
+                        # block config
+                        if (
+                            self._configs
+                            and hasattr(element, "config")
+                            and isinstance(element.config, ConfigDict)
+                        ):
+                            self._build_add_configs(element, cs)
+                    # suffixes referring to name w/o index refer to all of the
+                    # ones we just added in the loop above
+                    if self._suffixes:
+                        obj_indexed_name_map[obj_fullname] = added
+            # move to next object
+            cp += 1
+        # end of main loop
 
-        # type names
+        # +type names
         self._ser.type_names((str(t) for t in type_arr))
 
-        # connectivity
+        # +connectivity
         if self._conn:
             self._ser.arcs(
                 (
@@ -228,9 +252,9 @@ class Builder:
                 )
             )
 
-        # suffixes
+        # +suffixes
         if self._suffixes:
-            cur_idx = block_count
+            cur_idx = len(comp_arr)  # adding at end
             for name, type_idx, direction, datatype, d in suffixes:
                 # map names to blocks
                 d2 = {}
@@ -251,26 +275,50 @@ class Builder:
                 self._ser.suffix(name, type_idx, cur_idx, direction, datatype, d2)
                 cur_idx += 1
 
-        # config params
+    @staticmethod
+    def _build_add_subcomponents(element, comp_arr, parent_idx, cs: int) -> int:
+        """If can have subcomponents, add them."""
+        try:
+            subcomponents = element.component_objects()
+            for subobj in subcomponents:
+                comp_arr.append((subobj, parent_idx))
+                cs += 1
+        # no subcomponents; that's ok
+        except (AttributeError, TypeError):
+            pass
+        return cs
+
+    def _build_add_configs(self, element, element_idx):
+        for key, config_val in element.config.items():
+            cf_val = self._config_val(config_val)
+            self._ser.config(element_idx, key, cf_val)
 
     @classmethod
-    def _config_val(cls, config_val) -> dict | str:
-        """Create a new configuration value."""
-        result = None
+    def _config_val(cls, config_val) -> dict[str, Any]:
+        """Create a new configuration value, somewhat standardized."""
+        # standardized structure being returned
+        result = {
+            "value": None,  # scalar or dict
+            # "default_value": None,  # may be absent
+            # "description": "",  # may be absent
+        }
         if type(config_val) in {int, str, float, bool}:
-            result = config_val
+            result["value"] = config_val
         elif isinstance(config_val, ConfigDict):
-            result = {k: cls._config_val(v) for k, v in config_val.items()}
+            result["value"] = {k: cls._config_val(v) for k, v in config_val.items()}
         elif isinstance(config_val, ConfigList):
-            result = {}
+            list_map = {}
             for i, v in enumerate(config_val):
-                result[i] = cls._config_val(v)
+                list_map[i] = cls._config_val(v)
+            result["value"] = list_map
         elif isinstance(config_val, ConfigValue):
-            return {
-                "value": config_val.value(),
-                "default_value": config_val._default,
-                "description": config_val._description,
-            }
+            result.update(
+                {
+                    "value": config_val.value(),
+                    "default_value": config_val._default,
+                    "description": config_val._description,
+                }
+            )
         else:
-            result = str(config_val)  # shrug
+            result["value"] = str(config_val)  # shrug
         return result

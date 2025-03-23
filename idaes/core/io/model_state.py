@@ -66,7 +66,7 @@ class ModelCore(pydantic.BaseModel):
     conn: list[tuple[str, int, int]] = []
 
     # config: block index, key, value
-    configs: list[tuple[int, str, Any]] = []
+    configs: list[tuple[int, str, dict]] = []
 
     model_config = pydantic.ConfigDict()  # this is internal to Pydantic
 
