@@ -105,7 +105,7 @@ class Builder:
     SUFFIXES, CONN, CONFIGS = (1 << n for n in range(3))
     ALL = SUFFIXES | CONN | CONFIGS
 
-    def __init__(self, serializer: ModelSerializerInterface, include: int):
+    def __init__(self, serializer: ModelSerializerInterface, include: int = 0):
         self._ser = serializer
         self._callbacks = {
             DT.IndexedParam: self._ser.indexed_param,
@@ -178,13 +178,15 @@ class Builder:
                     )
                 )
             elif self._conn and obj_type in self._arc_types:
-                # arc -> names o#f parent blocks of src/dst ports
+                # arc -> names of parent blocks of src/dst ports
                 arcs[obj_name] = (
                     obj.source.parent_block().name,
                     obj.dest.parent_block().name,
                 )
                 # don't put the arc in the block list
             else:
+                # not a suffix or arc
+                # separate code based on whether indexed
                 if not hasattr(obj, "keys"):
                     # add the object
                     cb = self._callbacks.get(obj_type, self._ser.block)
@@ -215,13 +217,10 @@ class Builder:
                         cb(element, obj_name, type_idx, parent, key, True)
                         added.append(cs)
                         # put name in map if serializing connectivity or suffixes
-                        if self._conn or self._suffixes:
-                            elt_name = (
-                                element.getname(fully_qualified=True)
-                                # + "["
-                                # + str(key)
-                                # + "]"
-                            )
+                        if (self._conn or self._suffixes) and hasattr(
+                            element, "getname"
+                        ):
+                            elt_name = element.getname(fully_qualified=True)
                             obj_name_map[elt_name] = cs
                         # add subcomponents (if any)
                         cs = self._build_add_subcomponents(element, comp_arr, cp, cs)
