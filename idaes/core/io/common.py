@@ -7,8 +7,6 @@ IDAES model I/O (serialization).
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import namedtuple
-from enum import Enum
-import gzip
 from io import IOBase
 import logging
 from statistics import median
@@ -22,7 +20,6 @@ from pyomo.core.base.param import ParamData, IndexedParam
 from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
 from pyomo.environ import Block, Suffix
-from pyomo.network import Arc
 from pyomo.network.arc import ScalarArc, IndexedArc
 
 try:
@@ -41,13 +38,38 @@ FORMAT_VERSION = "0.0.1"
 
 
 class ModelSerializerInterface(ABC):
+    """Streaming-friendly serializer interface.
+
+    The methods will be called by `Builder.build`
+    in this order:
+    - Constructor, with metadata
+    - begin_blocks()
+    - block(), indexed_*(), suffix()
+    - end_blocks()
+    - type_names()
+    - configs()
+    - arcs()
+
+    Everything between begin_blocks() and end_blocks() will be a block.
+    The methods after end_blocks() all take iterators, so may go in any order
+    in the actual output.
+    """
+
+    def __init__(self, strm: IOBase, metadata: dict = None):
+        self.meta = metadata or {}
+        if "version" not in self.meta:
+            self.meta["version"] = FORMAT_VERSION
+        self.strm = strm
+
+    def close(self):
+        self.strm.close()
 
     @abstractmethod
-    def to_str(self) -> str:
+    def begin_blocks(self):
         pass
 
     @abstractmethod
-    def to_bytes(self) -> bytes:
+    def end_blocks(self):
         pass
 
     @abstractmethod
@@ -67,7 +89,7 @@ class ModelSerializerInterface(ABC):
         pass
 
     @abstractmethod
-    def scalar_var(self, e, name, type_i, parent, key):
+    def suffix(self, name: str, tidx: int, pidx: int, dr: int, dt: int, vals: dict):
         pass
 
     @abstractmethod
@@ -79,19 +101,7 @@ class ModelSerializerInterface(ABC):
         pass
 
     @abstractmethod
-    def suffix(
-        self,
-        name: str,
-        type_idx: int,
-        parent: int,
-        direction: int,
-        datatype: int,
-        values: dict,
-    ):
-        pass
-
-    @abstractmethod
-    def config(self, index: int, key: str, value: dict[str, Any]):
+    def configs(self, configs: Iterable[tuple[int, str, dict[str, Any]]]):
         pass
 
 
@@ -139,6 +149,10 @@ class Builder:
             suffixes = []
         if self._conn:
             arcs = {}  # unique streams
+        if self._configs:
+            configs = []
+
+        self._ser.begin_blocks()
 
         # main loop: until no more objects to process
         # cp = current position => block index
@@ -222,7 +236,7 @@ class Builder:
                             and hasattr(element, "config")
                             and isinstance(element.config, ConfigDict)
                         ):
-                            self._build_add_configs(element, cs)
+                            self._build_add_configs(element, cs, configs)
                     # suffixes referring to name w/o index refer to all of the
                     # ones we just added in the loop above
                     if self._suffixes:
@@ -247,18 +261,6 @@ class Builder:
             cp += 1
         # end of main loop
 
-        # +type names
-        self._ser.type_names((str(t) for t in type_arr))
-
-        # +connectivity
-        if self._conn:
-            self._ser.arcs(
-                (
-                    (name, obj_name_map[src], obj_name_map[dst])
-                    for name, (src, dst) in arcs.items()
-                )
-            )
-
         # +suffixes
         if self._suffixes:
             cur_idx = len(comp_arr)  # adding at end
@@ -282,6 +284,24 @@ class Builder:
                 self._ser.suffix(name, type_idx, cur_idx, direction, datatype, d2)
                 cur_idx += 1
 
+        self._ser.end_blocks()
+
+        # +type names
+        self._ser.type_names((str(t) for t in type_arr))
+
+        # +configs
+        if self._configs:
+            self._ser.configs(configs)
+
+        # +connectivity
+        if self._conn:
+            self._ser.arcs(
+                (
+                    (name, obj_name_map[src], obj_name_map[dst])
+                    for name, (src, dst) in arcs.items()
+                )
+            )
+
     @staticmethod
     def _build_add_subcomponents(element, comp_arr, parent_idx, cs: int) -> int:
         """If can have subcomponents, add them."""
@@ -295,10 +315,10 @@ class Builder:
             pass
         return cs
 
-    def _build_add_configs(self, element, element_idx):
+    def _build_add_configs(self, element, element_idx, configs):
         for key, config_val in element.config.items():
             cf_val = self._config_val(config_val)
-            self._ser.config(element_idx, key, cf_val)
+            configs.append((element_idx, key, cf_val))
 
     @classmethod
     def _config_val(cls, config_val) -> dict[str, Any]:

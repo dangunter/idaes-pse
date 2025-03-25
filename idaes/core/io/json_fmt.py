@@ -52,121 +52,86 @@ ENCODING = "utf-8"
 #         # do nothing for other blocks
 
 
-class BlockTuple:
-    # Meaning of positions in tuples.
-    # var, bool, param
-    NAME = 0
-    TYPE_IDX = 1
-    PARENT = 2
-    IDX = 3
-    IS_INDEXED = 4
-    VALUE = 5
-    FIXED = 6
-    STALE = 7
-    LB = 8
-    UB = 9
-    # & suffix
-    DIRECTION = 3
-    DATATYPE = 4
-    VALUES = 5
-
-
 class JsonModelSerializer(ModelSerializerInterface):
-    def __init__(self):
-        self._m = ModelState()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.strm.write('{"meta":')
+        json.dump(self.meta, self.strm)
 
-    def to_str(self) -> str:
-        return json.dumps(self._m.as_dict(), check_circular=False)
+    def begin_blocks(self):
+        self._num_blocks = 0
+        self.strm.write(',"core": {"blocks":[')
 
-    def to_bytes(self) -> bytes:
-        return self.to_str().encode(encoding=ENCODING)
+    def end_blocks(self):
+        self.strm.write("]")
+
+    def close(self):
+        self.strm.write("}")
+        super().close()
 
     def block(self, e, name, type_i, parent, key, indexed):
-        self._m.core.blocks.append(
-            (
-                name,
-                type_i,
-                parent,
-                key,
-                indexed,
-            )
-        )
+        idx_i = "1" if indexed else "0"
+        key_s = "null" if key is None else str(key)
+        self._add_block(f'"{name}",{type_i},{parent},"{key_s}",{idx_i}')
 
     def indexed_param(self, e, name, type_i, parent, key):
-        self._m.core.blocks.append(
-            (
-                name,
-                type_i,
-                parent,
-                key,
-                True,
-                e,
-            )
-        )
+        key_s = "null" if key is None else str(key)
+        self._add_block(f'"{name}",{type_i},{parent},"{key_s}",1,{e}')
 
     def indexed_bool(self, e, name, type_i, parent, key):
-        v = e[key]
-        self._m.core.blocks.append(
-            (
-                name,
-                type_i,
-                parent,
-                key,
-                True,
-                e.value,
-                e.fixed,
-                e.stale,
-            )
+        key_s = "null" if key is None else str(key)
+        fixed_i, stale_i = "1" if e.fixed else "0", "1" if e.stale else "0"
+        self._add_block(
+            f'"{name}",{type_i},{parent},"{key_s}",1,{e.value},{fixed_i},{stale_i}'
         )
 
     def indexed_var(self, e, name, type_i, parent, key):
-        self._m.core.blocks.append(
-            (
-                name,
-                type_i,
-                parent,
-                key,
-                True,
-                e.value,
-                e.fixed,
-                e.stale,
-                e.lb,
-                e.ub,
-            )
+        key_s = "null" if key is None else str(key)
+        fixed_i, stale_i = "1" if e.fixed else "0", "1" if e.stale else "0"
+        self._add_block(
+            f'"{name}",{type_i},{parent},"{key_s}",1,{e.value},{fixed_i},{stale_i},{e.lb},{e.ub}'
         )
 
-    def scalar_var(self, e, name, type_i, parent):
-        self._m.core.blocks.append(
-            (
-                name,
-                type_i,
-                parent,
-                None,
-                False,
-                e.value,
-                e.fixed,
-                e.stale,
-                e.lb,
-                e.ub,
-            )
-        )
+    def suffix(self, name: str, tidx: int, pidx: int, dr: int, dt: int, vals: dict):
+        values_d = json.dumps(vals)
+        self._add_block(f'"{name}",{tidx},{pidx},{dr},{dt},{values_d}')
 
-    def suffix(
-        self,
-        name: str,
-        type_i: int,
-        pidx: int,
-        direction: int,
-        datatype: int,
-        values: dict,
-    ):
-        self._m.core.blocks.append((name, type_i, pidx, direction, datatype, values))
+    def _add_block(self, data: str):
+        comma = "" if self._num_blocks == 0 else ","
+        self.strm.write(f"{comma}[{data}]")
+        self._num_blocks += 1
 
     def type_names(self, type_names: Iterable[str]):
-        self._m.core.block_types = list(type_names)
+        self.strm.write(',"types":[')
+        first = True
+        for nm in type_names:
+            if first:
+                self.strm.write('"' + nm + '"')
+                first = False
+            else:
+                self.strm.write(',"' + nm + '"')
+        self.strm.write("]")
+
+    def configs(self, configs: Iterable[tuple[int, str, dict[str, Any]]]):
+        self.strm.write(',"configs":[')
+        first = True
+        for idx, key, value in configs:
+            v = json.dumps(value)
+            if first:
+                self.strm.write(f'[{idx},"{key}",{v}]')
+                first = False
+            else:
+                self.strm.write(f',[{idx},"{key}",{v}]')
+        self.strm.write("]")
 
     def arcs(self, arcs: Iterable[tuple[str, int, int]]):
-        self._m.core.conn = list(arcs)
-
-    def config(self, index: int, key: str, value: dict[str, Any]):
-        self._m.core.configs.append((index, key, value))
+        # self._m.core.conn = list(arcs)
+        self.strm.write(',"arcs":[')
+        first = True
+        for name, src_idx, dst_idx in arcs:
+            if first:
+                self.strm.write(f'["{name}",{src_idx},{dst_idx}]')
+                first = False
+            else:
+                self.strm.write(f',["{name}",{src_idx},{dst_idx}]')
+        self.strm.write("]")
