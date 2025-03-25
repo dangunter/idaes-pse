@@ -19,7 +19,7 @@ import gzip
 from pyomo.common.config import ConfigDict, ConfigList, ConfigValue
 from pyomo.core.base.component import ComponentData
 from pyomo.core.base.param import ParamData, IndexedParam
-from pyomo.core.base.var import IndexedVar
+from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
 from pyomo.environ import Block, Suffix
 from pyomo.network import Arc
@@ -67,7 +67,7 @@ class ModelSerializerInterface(ABC):
         pass
 
     @abstractmethod
-    def type_names(self, type_name_iter):
+    def scalar_var(self, e, name, type_i, parent, key):
         pass
 
     @abstractmethod
@@ -96,8 +96,11 @@ class ModelSerializerInterface(ABC):
 
 
 # Types for data in blocks
-DataTypes = namedtuple("DataTypes", ("IndexedParam", "IndexedVar", "IndexedBooleanVar"))
-DT = DataTypes(IndexedParam, IndexedVar, IndexedBooleanVar)
+DataTypes = namedtuple(
+    "DataTypes",
+    ("IndexedParam", "IndexedVar", "IndexedBooleanVar", "VarData", "ScalarVar"),
+)
+DT = DataTypes(IndexedParam, IndexedVar, IndexedBooleanVar, VarData, ScalarVar)
 
 
 class Builder:
@@ -111,11 +114,12 @@ class Builder:
             DT.IndexedParam: self._ser.indexed_param,
             DT.IndexedVar: self._ser.indexed_var,
             DT.IndexedBooleanVar: self._ser.indexed_bool,
+            # DT.VarData: self._ser.scalar_var,
+            # DT.ScalarVar: self._ser.scalar_var,
         }
         self._suffixes = bool(include & self.SUFFIXES)
         self._conn = bool(include & self.CONN)
-        if self._conn:
-            self._arc_types = {ScalarArc, IndexedArc}
+        self._arc_types = {ScalarArc, IndexedArc}
         self._configs = bool(include & self.CONN)
 
     def build(self, model: Block) -> None:
@@ -143,6 +147,8 @@ class Builder:
         log_dbg = _log.isEnabledFor(logging.DEBUG)  # check once
         while cp < cs:
             obj, parent = comp_arr[cp]
+            # if parent > 0:
+            #    print(f"{obj.name} parent={parent}")
 
             if log_dbg:
                 _log.debug(f"object '{obj.name}' cp={cp} cs={cs} parent={parent}")
@@ -168,42 +174,28 @@ class Builder:
                 type_map[obj_type] = type_idx
 
             if obj_type is Suffix:
-                suffixes.append(
-                    (
-                        obj_name,
-                        type_idx,
-                        obj.direction.value,
-                        obj.datatype.value,
-                        {str(sk): sv for sk, sv in obj.items()},
+                if self._suffixes:
+                    suffixes.append(
+                        (
+                            obj_name,
+                            type_idx,
+                            obj.direction.value,
+                            obj.datatype.value,
+                            {str(sk): sv for sk, sv in obj.items()},
+                        )
                     )
-                )
-            elif self._conn and obj_type in self._arc_types:
-                # arc -> names of parent blocks of src/dst ports
-                arcs[obj_name] = (
-                    obj.source.parent_block().name,
-                    obj.dest.parent_block().name,
-                )
-                # don't put the arc in the block list
+            elif obj_type in self._arc_types:
+                if self._conn:
+                    # arc -> names of parent blocks of src/dst ports
+                    arcs[obj_name] = (
+                        obj.source.parent_block().name,
+                        obj.dest.parent_block().name,
+                    )
+                    # don't put the arc in the block list
             else:
                 # not a suffix or arc
                 # separate code based on whether indexed
-                if not hasattr(obj, "keys"):
-                    # add the object
-                    cb = self._callbacks.get(obj_type, self._ser.block)
-                    cb(obj, obj_name, type_idx, parent, key, False)
-                    # put name in map if serializing connectivity or suffixes
-                    if self._conn or self._suffixes:
-                        obj_name_map[obj_name] = cp
-                    # add subcomponents (if any)
-                    cs = self._build_add_subcomponents(obj, comp_arr, cp, cs)
-                    # optionally add block configs
-                    if (
-                        self._configs
-                        and hasattr(obj, "config")
-                        and isinstance(obj.config, ConfigDict)
-                    ):
-                        self._build_add_configs(obj, cp)
-                else:
+                if hasattr(obj, "keys"):
                     cb = None
                     # is_component_data = isinstance(obj, ComponentData)
                     indexed, start_cs, added = None, cs, []
@@ -218,7 +210,7 @@ class Builder:
                         added.append(cs)
                         # put name in map if serializing connectivity or suffixes
                         if (self._conn or self._suffixes) and hasattr(
-                            element, "getname"
+                            element, "getname"  # may be scalar
                         ):
                             elt_name = element.getname(fully_qualified=True)
                             obj_name_map[elt_name] = cs
@@ -235,6 +227,22 @@ class Builder:
                     # ones we just added in the loop above
                     if self._suffixes:
                         obj_indexed_name_map[obj_fullname] = added
+                else:
+                    # add the object
+                    cb = self._callbacks.get(obj_type, self._ser.block)
+                    cb(obj, obj_name, type_idx, parent, key, False)
+                    # put name in map if serializing connectivity or suffixes
+                    if self._conn or self._suffixes:
+                        obj_name_map[obj_name] = cp
+                    # add subcomponents (if any)
+                    cs = self._build_add_subcomponents(obj, comp_arr, cp, cs)
+                    # optionally add block configs
+                    if (
+                        self._configs
+                        and hasattr(obj, "config")
+                        and isinstance(obj.config, ConfigDict)
+                    ):
+                        self._build_add_configs(obj, cp)
             # move to next object
             cp += 1
         # end of main loop
@@ -278,7 +286,7 @@ class Builder:
     def _build_add_subcomponents(element, comp_arr, parent_idx, cs: int) -> int:
         """If can have subcomponents, add them."""
         try:
-            subcomponents = element.component_objects()
+            subcomponents = element.component_objects(descend_into=False)
             for subobj in subcomponents:
                 comp_arr.append((subobj, parent_idx))
                 cs += 1

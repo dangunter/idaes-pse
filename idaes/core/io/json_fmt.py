@@ -19,9 +19,9 @@ from .common import ModelSerializerInterface
 ENCODING = "utf-8"
 
 
-def serialize(model_state: ModelState) -> bytes:
-    d = model_state.as_dict()
-    return json.dumps(d, check_circular=False, encoding=ENCODING)
+# def serialize(model_state: ModelState) -> bytes:
+#     d = model_state.as_dict()
+#     return json.dumps(d, check_circular=False, encoding=ENCODING)
 
 
 # def deserialize_into(buf: bytes, model: Block):
@@ -127,6 +127,22 @@ class JsonModelSerializer(ModelSerializerInterface):
                 parent,
                 key,
                 True,
+                e.value,
+                e.fixed,
+                e.stale,
+                e.lb,
+                e.ub,
+            )
+        )
+
+    def scalar_var(self, e, name, type_i, parent):
+        self._m.core.blocks.append(
+            (
+                name,
+                type_i,
+                parent,
+                None,
+                False,
                 e.value,
                 e.fixed,
                 e.stale,
