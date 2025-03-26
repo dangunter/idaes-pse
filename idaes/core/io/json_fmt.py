@@ -64,6 +64,13 @@ class JsonModelSerializer(ModelSerializerInterface):
         self.strm.write("}")
         super().close()
 
+    def _add_block(self, data: str):
+        if self._num_blocks == 0:
+            self.strm.write("[" + data + "]")
+        else:
+            self.strm.write(",[" + data + "]")
+        self._num_blocks += 1
+
     def block(self, e, name, type_i, parent, key, indexed):
         idx_i = "1" if indexed else "0"
         key_s = "null" if key is None else str(key)
@@ -87,15 +94,6 @@ class JsonModelSerializer(ModelSerializerInterface):
             f'"{name}",{type_i},{parent},"{key_s}",1,{e.value},{fixed_i},{stale_i},{e.lb},{e.ub}'
         )
 
-    def suffix(self, name: str, tidx: int, pidx: int, dr: int, dt: int, vals: dict):
-        values_d = json.dumps(vals)
-        self._add_block(f'"{name}",{tidx},{pidx},{dr},{dt},{values_d}')
-
-    def _add_block(self, data: str):
-        comma = "" if self._num_blocks == 0 else ","
-        self.strm.write(f"{comma}[{data}]")
-        self._num_blocks += 1
-
     def type_names(self, type_names: Iterable[str]):
         self.strm.write(',"types":[')
         first = True
@@ -105,6 +103,18 @@ class JsonModelSerializer(ModelSerializerInterface):
                 first = False
             else:
                 self.strm.write(',"' + nm + '"')
+        self.strm.write("]")
+
+    def suffixes(self, suffixes: Iterable[tuple[str, int, int, int, int, dict]]):
+        self.strm.write(',"suffixes":[')
+        first = True
+        for name, tidx, pidx, dr, dt, vals in suffixes:
+            values_d = json.dumps(vals)
+            if first:
+                self.strm.write(f'"{name}",{tidx},{pidx},{dr},{dt},{values_d}')
+                first = False
+            else:
+                self.strm.write(f',"{name}",{tidx},{pidx},{dr},{dt},{values_d}')
         self.strm.write("]")
 
     def configs(self, configs: Iterable[tuple[int, str, dict[str, Any]]]):

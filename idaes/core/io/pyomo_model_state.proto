@@ -29,8 +29,8 @@ message Metadata {
 }
 
 message Block {
-    // Block index
-    uint32 idx = 1;
+    // Block index, -1 means last
+    int32 idx = 1;
     // Subtype of block (except SUFFIX, dealt with as Suffix)
     BlockType subtype = 2;
     // Local (not fully qualified) name
@@ -40,20 +40,56 @@ message Block {
     // Block index of parent block
     int32 parent_index = 5;
     // Index of the variable string=s, float=f
+    bool has_variable_index = 6;
     oneof variable_index {
-        string var_index_s = 6;
-        float var_index_f = 7;
+        string var_index_s = 7;
+        float var_index_f = 8;
     }
     // Value
-    double value = 8;
+    double value = 9;
     // Flag for fixed value
-    bool fixed = 9;
+    bool fixed = 10;
     // Flag for stale value
-    bool stale = 10;
-    // Lower bound or empty
-    bool has_lb = 11;
+    bool stale = 11;
+    // Lower bound
     double lb = 12;
     // Upper bound
-    bool has_ub = 13;
-    double ub = 14;
+    double ub = 13;
+}
+
+message Suffix {
+    // Block index, -1 means last
+    int32 idx = 1;
+    // Local (not fully qualified) name
+    string name = 2;
+    // Index into the 'types' array
+    uint32 type_index = 3;
+    // Block index of parent block
+    int32 parent_index = 4;
+    // Suffix info
+    SuffixDirection direction = 5;
+    SuffixDatatype datatype = 6;
+    map <string, int32> int_data = 7;
+    map <string, double> float_data = 8;
+    map <string, string> any_data = 9; 
+}
+
+// Arcs (streams)
+message Arc {
+    // Name of the stream
+    string name = 1;
+    // Index of the source block
+    uint32 src_index = 2;
+    // Index of the destination block
+    uint32 dst_index = 3;
+}
+
+// Configuration value {key: value} for a block
+message Config {
+    // Block index
+    uint32 block_index = 1;
+    // Configuration key
+    string key = 2;
+    // Value is JSON-encoded
+    string val = 3;
 }

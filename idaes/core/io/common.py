@@ -44,11 +44,12 @@ class ModelSerializerInterface(ABC):
     in this order:
     - Constructor, with metadata
     - begin_blocks()
-    - block(), indexed_*(), suffix()
+    - block(), indexed_*()
     - end_blocks()
     - type_names()
-    - configs()
-    - arcs()
+    - suffixes()   -- if included
+    - configs()    -- if included
+    - arcs()       -- if included
 
     Everything between begin_blocks() and end_blocks() will be a block.
     The methods after end_blocks() all take iterators, so may go in any order
@@ -89,7 +90,7 @@ class ModelSerializerInterface(ABC):
         pass
 
     @abstractmethod
-    def suffix(self, name: str, tidx: int, pidx: int, dr: int, dt: int, vals: dict):
+    def suffixes(self, suffixes: Iterable[tuple[str, int, int, int, int, dict]]):
         pass
 
     @abstractmethod
@@ -254,17 +255,18 @@ class Builder:
                     if (
                         self._configs
                         and hasattr(obj, "config")
-                        and isinstance(obj.config, ConfigDict)
+                name, type_idx, cur_idx, direction, datatype, d2        and isinstance(obj.config, ConfigDict)
                     ):
                         self._build_add_configs(obj, cp)
             # move to next object
             cp += 1
         # end of main loop
+        self._ser.end_blocks()
 
         # +suffixes
         if self._suffixes:
             cur_idx = len(comp_arr)  # adding at end
-            for name, type_idx, direction, datatype, d in suffixes:
+            for i, (name, type_idx, direction, datatype, d) in enumerate(suffixes):
                 # map names to blocks
                 d2 = {}
                 for k, v in d.items():
@@ -281,10 +283,9 @@ class Builder:
                         except KeyError:
                             _log.warning(f"Cannot find object for suffix name={k}")
                             continue
-                self._ser.suffix(name, type_idx, cur_idx, direction, datatype, d2)
                 cur_idx += 1
+            self._ser.suffixes(suffixes)
 
-        self._ser.end_blocks()
 
         # +type names
         self._ser.type_names((str(t) for t in type_arr))

@@ -4,6 +4,7 @@ Protobuf model state I/O
 
 # stdlib
 import time
+from typing import Iterable
 
 # third-party
 from pyomo.environ import Suffix, Block
@@ -14,7 +15,7 @@ except ImportError:
     import json
 
 # package
-from . import pyomo_model_state_pb2 as pb_model
+from . import pyomo_model_state_pb2 as pb
 from .model_state import ModelState
 from .common import ModelSerializerInterface
 
@@ -22,92 +23,127 @@ __author__ = "Dan Gunter (LBNL)"
 
 # map from Pyomo Suffix constant to matching PB constant
 _sfx_dir_map = {
-    getattr(Suffix, s): getattr(pb_model.SuffixDirection, s)
+    getattr(Suffix, s): getattr(pb.SuffixDirection, s)
     for s in ("LOCAL", "IMPORT", "EXPORT", "IMPORT_EXPORT")
 }
 _sfx_dt_map = {
-    Suffix.FLOAT: pb_model.SuffixDatatype.FLOAT,
-    Suffix.INT: pb_model.SuffixDatatype.INT,
-    None: pb_model.SuffixDatatype.NONE,
+    Suffix.FLOAT: pb.SuffixDatatype.FLOAT,
+    Suffix.INT: pb.SuffixDatatype.INT,
+    None: pb.SuffixDatatype.NONE,
 }
 
+
 class ProtobufSerializer(ModelSerializerInterface):
+    """Serialize using protocol buffers (protobuf).
+
+    The output format will be a stream with 3 types of messages:
+    Message 1    : Metadata
+    Messages 2..N: Block (last block will be a marker)
+    Message N+1  : OptionalData
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        pb_meta = pb_model.
+        meta = pb.Metadata()
+        meta.format_version = self.meta["format_version"]
+        meta.created = self.meta.get("created", time.time())
+        meta.author = self.meta.get("author", "unknown")
+        self.strm.write(meta.SerializeToString())
 
+    def begin_blocks(self):
+        self._block_num = 0
 
-# def serialize(model_state: ModelState) -> bytes:
-#     m = pb_model.Model()
-#     # metadata
-#     m.meta.format_version = FORMAT_VERSION
-#     m.meta.created = time.time()
-#     m.meta.author = "OpenPSE Team"
-#     # data: blocks
-#     type_enum = pb_model.BlockType
-#     for i, b in enumerate(model_state.core.blocks):
-#         type_idx = b[1]
-#         if type_idx == Subtypes.st_suffix:
-#             o = m.core.suffixes.add()
-#         else:
-#             o = m.core.blocks.add()
-#         o.name, o.type_index, o.parent_index = b[:3]
-#         # fill in values according to sub-type
-#         if type_idx <= Subtypes.st_param:
-#             # set var_index
-#             if isinstance(b[3], float):
-#                 o.var_index_f = b[3]
-#                 o.var_index_s = ""
-#             else:
-#                 o.var_index_s = str(b[3])
-#             # set value
-#             o.value = b[4]
-#             # add fixed/stale for var & bool
-#             if type_idx < Subtypes.st_param:
-#                 o.fixed, o.stale = b[5], b[6]
-#                 # add lb, ub for var
-#                 if type_idx == Subtypes.st_var:
-#                     o.subtype = type_enum.VAR
-#                     if b[7] is None:
-#                         o.has_lb = False
-#                     else:
-#                         o.has_lb, o.lb = True, b[7]
-#                     if b[8] is None:
-#                         o.has_ub = False
-#                     else:
-#                         o.has_ub, o.ub = True, b[8]
-#                 else:
-#                     o.subtype = type_enum.BOOL
-#             else:
-#                 o.subtype = type_enum.PARAM
-#         elif type_idx == Subtypes.st_suffix:
-#             o.idx = i
-#             o.subtype = type_enum.SUFFIX
-#             o.direction = _sfx_dir_map[b[3]]d
-#             datatype = b[4]
-#             o.datatype = _sfx_dt_map[datatype]
-#             for key, val in b[5].items():
-#                 skey = str(key)
-#                 if datatype == Suffix.FLOAT:
-#                     o.float_data[skey] = val
-#                 elif datatype == Suffix.INT:
-#                     o.int_data[skey] = val
-#                 else:
-#                     o.any_data[skey] = str(val)
-#         else:
-#             o.subtype = type_enum.BASE
-#     # data: connectivity
-#     for item in model_state.core.conn:
-#         o = m.core.conn.add()
-#         o.arc_index, o.src_index, o.dst_index = item
-#     # data: config values
-#     for item in model_state.core.configs:
-#         o = m.core.config.add()
-#         o.block_index = item[0]
-#         o.key = item[1]
-#         o.val = json.dumps(item[2])
-#     # done
-#     return m.SerializeToString()
+    def end_blocks(self):
+        # write a 'marker' block
+        b = pb.Block(idx=-1)
+        self.strm.write(b.SerializeToString())
+
+    def close(self):
+        # write the optional data sections before closing
+        od = self._get_opt_data()
+        self.strm.write(od.SerializeToString())
+        super().close()
+
+    def _block(self, name, type_i, parent, indexed, key):
+        b = pb.Block()
+        b.idx = self._block_num
+        self._block_num += 1
+        b.name = name
+        b.type_index = type_i
+        b.parent_index = parent
+        if indexed:
+            b.has_variable_index = True
+            if isinstance(key, float):
+                b.var_index_f = key
+            else:
+                b.var_index_s = str(key)
+        else:
+            b.has_variable_index = False
+        return b
+
+    def block(self, e, name, type_i, parent, key, indexed):
+        b = self._block(name, type_i, parent, indexed, key)
+        b.subtype = pb.BlockType.BASE
+        self.strm.write(b.SerializeToString())
+
+    def indexed_param(self, e, name, type_i, parent, key):
+        b = self._block(name, type_i, parent, True, key)
+        b.subtype = pb.BlockType.PARAM
+        b.value = e
+        self.strm.write(b.SerializeToString())
+
+    def indexed_bool(self, e, name, type_i, parent, key):
+        b = self._block(name, type_i, parent, True, key)
+        b.subtype = pb.BlockType.BOOL
+        b.value = e.value
+        b.fixed, b.stale = e.fixed, e.stale
+        self.strm.write(b.SerializeToString())
+
+    def indexed_var(self, e, name, type_i, parent, key):
+        b = self._block(name, type_i, parent, True, key)
+        b.subtype = pb.BlockType.VAR
+        b.value = e.value
+        b.fixed, b.stale = e.fixed, e.stale
+        b.lb, b.ub = e.lb, e.ub
+        self.strm.write(b.SerializeToString())
+
+    def _get_opt_data(self):
+        if self._opt_data is None:
+            self._opt_data = pb.OptionalData()
+        return self._opt_data
+
+    def suffixes(self, suffixes: Iterable[tuple[str, int, int, int, int, dict]]):
+        od = self._get_opt_data()
+        for name, tidx, pidx, dr, dt, vals in suffixes:
+            b = od.suffixes.add()
+            b.name = name
+            b.type_index = tidx
+            b.parent_index = pidx
+            b.direction = _sfx_dir_map[dr]
+            b.datatype = _sfx_dt_map[dt]
+            for key, val in vals.items():
+                skey = str(key)
+                if b.datatype == Suffix.FLOAT:
+                    b.float_data[skey] = val
+                elif b.datatype == Suffix.INT:
+                    b.int_data[skey] = val
+                else:
+                    b.any_data[skey] = str(val)
+
+    def arcs(self, arcs: Iterable[tuple[str, int, int]]):
+        od = self._get_opt_data()
+        for name, src_i, dst_i in arcs:
+            a = od.arcs.add()
+            a.name, a.src_index, a.dst_index = name, src_i, dst_i
+
+    def configs(self, configs: Iterable[tuple[int, str, dict[str, Any]]]):
+        od = self._get_opt_data()
+        for idx, key, val in configs:
+            sval = json.dumps(val)
+            cfg = od.configs.add()
+            cfg.block_index = idx
+            cfg.key = key
+            cfg.val = sval
 
 
 # def deserialize_into(buf: bytes, model: Block):
