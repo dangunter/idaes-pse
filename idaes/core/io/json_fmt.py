@@ -19,11 +19,6 @@ from .common import ModelSerializerInterface
 ENCODING = "utf-8"
 
 
-# def serialize(model_state: ModelState) -> bytes:
-#     d = model_state.as_dict()
-#     return json.dumps(d, check_circular=False, encoding=ENCODING)
-
-
 # def deserialize_into(buf: bytes, model: Block):
 #     txt = bytes.decode(encoding=ENCODING)
 #     mstate = ModelState.model_validate_json(txt)

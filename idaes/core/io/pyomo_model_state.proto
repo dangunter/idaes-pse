@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+enum BlockType {
+    BASE = 0;
+    VAR = 1;
+    BOOL = 2;
+    PARAM = 3;
+    SUFFIX = 4;
+}
+
+enum SuffixDirection {
+    LOCAL = 0;
+    IMPORT = 1;
+    EXPORT = 2;
+    IMPORT_EXPORT = 3;
+}
+
+enum SuffixDatatype {
+    FLOAT = 0;
+    INT = 1;
+    NONE = 2; // ANY
+}
+
+message Metadata {
+    string format_version = 1;
+    float created = 2;
+    string author = 3;
+    repeated string coauthors = 4;
+}
+
+message Block {
+    // Block index
+    uint32 idx = 1;
+    // Subtype of block (except SUFFIX, dealt with as Suffix)
+    BlockType subtype = 2;
+    // Local (not fully qualified) name
+    string name = 3;
+    // Index into the 'types' array
+    uint32 type_index = 4;
+    // Block index of parent block
+    int32 parent_index = 5;
+    // Index of the variable string=s, float=f
+    oneof variable_index {
+        string var_index_s = 6;
+        float var_index_f = 7;
+    }
+    // Value
+    double value = 8;
+    // Flag for fixed value
+    bool fixed = 9;
+    // Flag for stale value
+    bool stale = 10;
+    // Lower bound or empty
+    bool has_lb = 11;
+    double lb = 12;
+    // Upper bound
+    bool has_ub = 13;
+    double ub = 14;
+}

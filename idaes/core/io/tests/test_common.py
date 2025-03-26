@@ -92,6 +92,3 @@ def test_builder_build1(dummy_serializer, model, flags):
         if b["name"] in units:
             found += 1
     assert found == len(units)
-
-
-#        dummy_serializer.reset()
