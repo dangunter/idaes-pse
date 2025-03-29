@@ -21,6 +21,10 @@ enum SuffixDatatype {
     NONE = 2; // ANY
 }
 
+message Size {
+    uint32 n = 1;
+}
+
 message Metadata {
     string format_version = 1;
     float created = 2;
@@ -55,6 +59,10 @@ message Block {
     double lb = 12;
     // Upper bound
     double ub = 13;
+}
+
+message Types {
+    repeated string type_names = 1;
 }
 
 message Suffix {
@@ -93,3 +101,8 @@ message Config {
     // Value is JSON-encoded
     string val = 3;
 }
+ message OptionalData {
+    repeated Suffix suffixes = 1;
+    repeated Arc arcs = 2;
+    repeated Config configs = 3; 
+ }

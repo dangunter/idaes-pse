@@ -74,14 +74,14 @@ def model():
 
 @pytest.mark.unit
 def test_builder_init(dummy_serializer):
-    builder = common.Builder(dummy_serializer)
+    builder = common.ModelGetter(dummy_serializer)
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("flags", list(range(1 << 3)))
 def test_builder_build1(dummy_serializer, model, flags):
-    bld = common.Builder(dummy_serializer, include=flags)
-    bld.build(model)
+    bld = common.ModelGetter(dummy_serializer, include=flags)
+    bld.run(model)
     # m.fs = FlowsheetBlock
     # m.fs.M01 = Mixer(...)
     # m.fs.H02 = Heater(...)

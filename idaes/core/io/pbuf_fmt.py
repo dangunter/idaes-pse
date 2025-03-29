@@ -3,8 +3,11 @@ Protobuf model state I/O
 """
 
 # stdlib
+from collections import namedtuple
+from enum import Enum
+import struct
 import time
-from typing import Iterable
+from typing import Iterable, Any
 
 # third-party
 from pyomo.environ import Suffix, Block
@@ -17,7 +20,8 @@ except ImportError:
 # package
 from . import pyomo_model_state_pb2 as pb
 from .model_state import ModelState
-from .common import ModelSerializerInterface
+from .common import ModelSerializerInterface, ModelDeserializerInterface
+from .common import DSBlock, DSBool, DSMeta, DSParam, DSVar, OutOfOrder
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -33,6 +37,76 @@ _sfx_dt_map = {
 }
 
 
+class ProtobufDeserializer:
+
+    class State(Enum):
+        Metadata = (pb.Metadata, "metadata")
+        Blocks = (pb.Block, "blocks")
+        OptionalData = (pb.OptionalData, "optional data")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._state = self.State.Metadata
+
+    def metadata(self) -> DSMeta:
+        if self._state != self.State.Metadata:
+            raise OutOfOrder("metadata", self._state.value[1])
+        m = self._get_message()
+        return DSMeta(m.format_version, m.created, m.author, m.coauthors)
+
+    def block(self) -> DSBlock | DSParam | DSBool | DSVar | None:
+        if self._state != self.State.Block:
+            raise OutOfOrder("metadata", self._state.value[1])
+        m = self._get_message()
+        if m.idx == -1:
+            return None
+        if m.WhichOneOf("variable_index") == "var_index_f":
+            key = m.var_index_f
+        else:
+            key = m.var_index_s
+        if m.HasField("lb"):
+            result = DSVar(
+                m.name,
+                m.idx,
+                m.type_index,
+                m.parent_index,
+                m.has_variable_index,
+                key,
+                m.value,
+                m.fixed,
+                m.stale,
+                m.lb,
+                m.ub,
+            )
+        elif m.HasField("fixed"):
+            result = DSBool(
+                m.name,
+                m.idx,
+                m.type_index,
+                m.parent_index,
+                m.has_variable_index,
+                key,
+                m.value,
+                m.fixed,
+                m.stale,
+            )
+        elif m.HasField("value"):
+            result = DSParam(
+                m.name,
+                m.idx,
+                m.type_index,
+                m.parent_index,
+                m.has_variable_index,
+                key,
+                m.value,
+            )
+        else:
+            result = DSBlock(
+                m.name, m.idx, m.type_index, m.parent_index, m.has_variable_index, key
+            )
+        return result
+
+
 class ProtobufSerializer(ModelSerializerInterface):
     """Serialize using protocol buffers (protobuf).
 
@@ -40,28 +114,49 @@ class ProtobufSerializer(ModelSerializerInterface):
     Message 1    : Metadata
     Messages 2..N: Block (last block will be a marker)
     Message N+1  : OptionalData
+
+    Since streaming isn't really natively supported, we DIY it.
+    Each message will be preceded by a 4-byte unsigned length
+    so, e.g. at any position `p` in a buffer `buf`
+    ```
+    n = struct.unpack("!I", buf[p:p + 4])
+    <Message>.ParseFromString(buf[p + 4: 4 + n + p])
+    p += n + 4 # move to next message
+    ```
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         meta = pb.Metadata()
-        meta.format_version = self.meta["format_version"]
+        meta.format_version = self.meta["version"]
         meta.created = self.meta.get("created", time.time())
         meta.author = self.meta.get("author", "unknown")
-        self.strm.write(meta.SerializeToString())
+        n = self._write(meta)
+        print(f"@@ meta was {n} bytes")
+        self._opt_data = None
+
+    def _write(self, message) -> int:
+        # streaming writes:
+        # - message-length
+        # - message
+        data = message.SerializeToString()
+        data_sz = len(data)
+        sz_msg = struct.pack("!I", data_sz)
+        self.strm.write(sz_msg)
+        self.strm.write(data)
+        return 4 + data_sz
 
     def begin_blocks(self):
         self._block_num = 0
 
     def end_blocks(self):
-        # write a 'marker' block
-        b = pb.Block(idx=-1)
-        self.strm.write(b.SerializeToString())
+        # write a zero-size as a marker
+        size = struct.pack("!I", 0)
+        self.strm.write(size)
 
     def close(self):
         # write the optional data sections before closing
-        od = self._get_opt_data()
-        self.strm.write(od.SerializeToString())
+        self._write(self._get_opt_data())
         super().close()
 
     def _block(self, name, type_i, parent, indexed, key):
@@ -84,20 +179,20 @@ class ProtobufSerializer(ModelSerializerInterface):
     def block(self, e, name, type_i, parent, key, indexed):
         b = self._block(name, type_i, parent, indexed, key)
         b.subtype = pb.BlockType.BASE
-        self.strm.write(b.SerializeToString())
+        self._write(b)
 
     def indexed_param(self, e, name, type_i, parent, key):
         b = self._block(name, type_i, parent, True, key)
         b.subtype = pb.BlockType.PARAM
         b.value = e
-        self.strm.write(b.SerializeToString())
+        self._write(b)
 
     def indexed_bool(self, e, name, type_i, parent, key):
         b = self._block(name, type_i, parent, True, key)
         b.subtype = pb.BlockType.BOOL
         b.value = e.value
         b.fixed, b.stale = e.fixed, e.stale
-        self.strm.write(b.SerializeToString())
+        self._write(b)
 
     def indexed_var(self, e, name, type_i, parent, key):
         b = self._block(name, type_i, parent, True, key)
@@ -105,12 +200,17 @@ class ProtobufSerializer(ModelSerializerInterface):
         b.value = e.value
         b.fixed, b.stale = e.fixed, e.stale
         b.lb, b.ub = e.lb, e.ub
-        self.strm.write(b.SerializeToString())
+        self._write(b)
 
     def _get_opt_data(self):
         if self._opt_data is None:
             self._opt_data = pb.OptionalData()
         return self._opt_data
+
+    def type_names(self, type_names: Iterable[str]):
+        types = pb.Types()
+        types.type_names[:] = type_names
+        self._write(types)
 
     def suffixes(self, suffixes: Iterable[tuple[str, int, int, int, int, dict]]):
         od = self._get_opt_data()
@@ -126,7 +226,7 @@ class ProtobufSerializer(ModelSerializerInterface):
                 if b.datatype == Suffix.FLOAT:
                     b.float_data[skey] = val
                 elif b.datatype == Suffix.INT:
-                    b.int_data[skey] = val
+                    b.int_data[skey] = int(val)
                 else:
                     b.any_data[skey] = str(val)
 

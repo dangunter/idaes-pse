@@ -106,6 +106,35 @@ class ModelSerializerInterface(ABC):
         pass
 
 
+# Deserializer (DS) return values
+DSMeta = namedtuple("Metadata", "version,created,author,coauthors")
+DSBlock = namedtuple("Block", "name,idx,tidx,pidx,indexed,key")
+DSParam = namedtuple("Block", "name,idx,tidx,pidx,indexed,key,value")
+DSBool = namedtuple("Block", "name,idx,tidx,pidx,indexed,key,value,fixed,stale")
+DSVar = namedtuple("Block", "name,idx,tidx,pidx,indexed,key,value,fixed,stale,lb ub")
+
+
+class OutOfOrder(Exception):
+    def __init__(self, requested: str, expected: str):
+        raise RuntimeError(
+            "Values requested out of order: "
+            f"requested={requested}, expected={expected}"
+        )
+
+
+class ModelDeserializerInterface(ABC):
+    def __init__(self, stream):
+        self.strm = stream
+
+    @abstractmethod
+    def metadata(self) -> dict:
+        pass
+
+    @abstractmethod
+    def block(self) -> DSBlock | DSParam | DSBool | DSVar | None:
+        pass
+
+
 # Types for data in blocks
 DataTypes = namedtuple(
     "DataTypes",
@@ -114,7 +143,7 @@ DataTypes = namedtuple(
 DT = DataTypes(IndexedParam, IndexedVar, IndexedBooleanVar, VarData, ScalarVar)
 
 
-class Builder:
+class ModelGetter:
     # Flags for things to `include``
     SUFFIXES, CONN, CONFIGS = (1 << n for n in range(3))
     ALL = SUFFIXES | CONN | CONFIGS
@@ -133,7 +162,7 @@ class Builder:
         self._arc_types = {ScalarArc, IndexedArc}
         self._configs = bool(include & self.CONN)
 
-    def build(self, model: Block) -> None:
+    def run(self, model: Block) -> None:
         comp_arr = [(model, -1)]
 
         # initialize type arr/map with known types
@@ -194,6 +223,7 @@ class Builder:
                         (
                             obj_name,
                             type_idx,
+                            parent,
                             obj.direction.value,
                             obj.datatype.value,
                             {str(sk): sv for sk, sv in obj.items()},
@@ -252,11 +282,7 @@ class Builder:
                     # add subcomponents (if any)
                     cs = self._build_add_subcomponents(obj, comp_arr, cp, cs)
                     # optionally add block configs
-                    if (
-                        self._configs
-                        and hasattr(obj, "config")
-                name, type_idx, cur_idx, direction, datatype, d2        and isinstance(obj.config, ConfigDict)
-                    ):
+                    if self._configs and hasattr(obj, "config"):
                         self._build_add_configs(obj, cp)
             # move to next object
             cp += 1
@@ -266,7 +292,9 @@ class Builder:
         # +suffixes
         if self._suffixes:
             cur_idx = len(comp_arr)  # adding at end
-            for i, (name, type_idx, direction, datatype, d) in enumerate(suffixes):
+            for i, (name, type_idx, pidx, direction, datatype, d) in enumerate(
+                suffixes
+            ):
                 # map names to blocks
                 d2 = {}
                 for k, v in d.items():
@@ -285,7 +313,6 @@ class Builder:
                             continue
                 cur_idx += 1
             self._ser.suffixes(suffixes)
-
 
         # +type names
         self._ser.type_names((str(t) for t in type_arr))
@@ -350,3 +377,15 @@ class Builder:
         else:
             result["value"] = str(config_val)  # shrug
         return result
+
+
+class ModelSetter:
+    def __init__(self, deserializer: ModelDeserializerInterface):
+        self._dser = deserializer
+
+    def run(self, model: Block):
+        meta = self._dser.metadata()
+        # XXX: do something?
+        while True:
+            block = self._deser.block()
+            # TODO: set values from block
