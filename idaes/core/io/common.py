@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import namedtuple
 from io import IOBase
 import logging
+import re
 from statistics import median
 from typing import Any, Iterable, Optional
 import time
@@ -20,7 +21,7 @@ from pyomo.core.base.param import ParamData, IndexedParam
 from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
 from pyomo.environ import Var, Param, Block, Suffix
-from pyomo.network.arc import ScalarArc, IndexedArc
+from pyomo.network.arc import ScalarArc, IndexedArc, Arc
 import msgpack
 
 try:
@@ -41,12 +42,12 @@ FORMAT_VERSION = "0.0.1"
 
 SECT_VAR, SECT_VAR_B = "variable", b"variable"
 SECT_SUFFIX, SECT_SUFFIX_B = "suffix", b"suffix"
-BT_COMP, BT_VAR, BT_PARAM = 0, 1, 2
+BT_OTHER, BT_VAR, BT_PARAM = 0, 1, 2
 
 
 class ModelWriter:
     # Flags for things to `include``
-    SUFFIXES, ARCS, CONFIGS = (1 << n for n in range(3))
+    SUFFIXES, ARCS, CONFIGS, ALL_BLOCKS = (1 << n for n in range(4))
     ALL = SUFFIXES | ARCS | CONFIGS
     # Types
     # ARC_TYPES = {ScalarArc, IndexedArc}
@@ -62,6 +63,7 @@ class ModelWriter:
         self._opt_suffix = bool(include & self.SUFFIXES)
         self._opt_arc = bool(include & self.ARCS)
         self._opt_config = bool(include & self.CONFIGS)
+        self._opt_all_blocks = bool(include & self.ALL_BLOCKS)
         self._model = model
 
     def write(self, stream: IOBase, text=False):
@@ -72,18 +74,18 @@ class ModelWriter:
         dump(meta, stream)
         # variables
         dump({"section": SECT_VAR}, stream)
-        dump((BT_COMP, id(m), "MODEL", -1), stream)
         for c in m.component_objects():
             if c.is_variable_type():
                 subtype = BT_VAR
             elif c.is_parameter_type():
                 subtype = BT_PARAM
             else:
-                subtype = BT_COMP
-            # subtype, id, name, parent-id, is_indexed, num
+                subtype = BT_OTHER
+            # subtype, id, name, parent_id, [is_indexed, num]
             b = [subtype, id(c), c.name, id(c.parent_block())]
-            if subtype == BT_COMP:
-                dump(b, stream)
+            if subtype == BT_OTHER:
+                if self._opt_arc or self._opt_all_blocks:
+                    dump(b, stream)
             else:
                 items = []
                 for index in c:
@@ -106,6 +108,9 @@ class ModelWriter:
             dump({"section": SECT_SUFFIX}, stream)
             for c in m.component_objects(Suffix):
                 print("@@ SUFFIX")
+        if self._opt_arc:
+            for c in m.component_objects(Arc):
+                src_id, dst = c.source.parent_block().name, c.dest.parent_block()
 
     @staticmethod
     def _dump_json_line(obj, stream):
@@ -126,7 +131,7 @@ class ModelReader:
             self._h = handler
 
     def read(self, stream: IOBase, text=False):
-        var_state = {BT_VAR: 3, BT_PARAM: 4, BT_COMP: 2}
+        var_state = {BT_VAR: 3, BT_PARAM: 4, BT_OTHER: 2}
         self._stream = stream
         if text:
             obj_stream = self._read_json_lines
@@ -159,10 +164,11 @@ class ModelReader:
             # other known states
             elif state == 2:
                 data_type, block_id = obj[0], obj[1]
-                if data_type == BT_COMP:
-                    self._h.block(block_id, str(obj[2]), obj[3])
+                nm = obj[2] if text else obj[2].decode()
+                if data_type == BT_OTHER:
+                    self._h.block(block_id, nm, obj[3])
                 else:
-                    self._h.block(block_id, str(obj[2]), *obj[3:])
+                    self._h.block(block_id, nm, *obj[3:])
                 state = var_state[data_type]
                 n, i = obj[-1], 0
             elif 3 <= state <= 4:
@@ -210,12 +216,12 @@ class BaseHandler:
     def block_data_var(
         self,
         block_id: int,
-        index: int,
+        index: float | str,
         value: float | bool,
         fixed: bool,
         stale: bool,
-        lb: Optional[float],
-        ub: Optional[float],
+        lb: Optional[float] = None,
+        ub: Optional[float] = None,
     ):
         pass
 
@@ -229,12 +235,87 @@ class BaseHandler:
         pass
 
 
+class BaseModelHandler(BaseHandler):
+    def __init__(self, model: Block):
+        self._m = model
+        self._cur_block = None
+
+    def block(
+        self,
+        block_id: int,
+        name: str,
+        parent_id: int,
+        is_indexed: bool = False,
+        num: int = 0,
+    ):
+        b = self._m
+        nm = str(name)
+        parts = nm.split(".")
+        n, i = len(parts), 0
+        last = n - 1
+        while i < n:
+            if i != last and parts[i + 1][-1] == "]":
+                # foo.bar[0.0].baz -> i='bar[0', i+1='0]'
+                lbr = parts[i].rfind("[")
+                c_name = parts[i][:lbr]
+                b = getattr(b, c_name)
+                c_idx = float(parts[i][lbr + 1 :] + "." + parts[i + 1][:-1])
+                b = b[c_idx]
+                i += 2
+            else:
+                b = getattr(b, parts[i])
+                i += 1
+        self.model_block(b, block_id, is_indexed, num)
+
+    def model_block(self, b, block_id, is_indexed, num):
+        self._cur_block = b
+        self._cur_block_id = block_id
+        self._cur_block_ix = is_indexed
+        self._cur_block_num = num
+        self._cur_data_block_count = 0
+
+    def block_data_var(
+        self,
+        block_id: int,
+        index: float | str,
+        value: float | bool,
+        fixed: bool,
+        stale: bool,
+        lb: Optional[float] = None,
+        ub: Optional[float] = None,
+    ):
+        if self._cur_block is None:
+            raise ValueError("Unexpected variable")
+        if self._cur_data_block_count >= self._cur_block_num:
+            raise ValueError(
+                f"Too many data blocks: {self._cur_data_block_count} >= {self._cur_block_num}"
+            )
+        if self._cur_block_ix:
+            d = self._cur_block[index]
+        else:
+            d = self._cur_block[None]
+        self.model_block_data(d, value, fixed, stale, lb, ub)
+        self._cur_data_block_count += 1
+
+    def model_block_data(
+        self,
+        data_block: Block,
+        value: float | bool,
+        fixed: bool,
+        stale: bool,
+        lb: Optional[float] = None,
+        ub: Optional[float] = None,
+    ):
+        # print(f"set value {value} on data block {data_block}")
+        pass
+
+
 if __name__ == "__main__":
     import sys
     from idaes.core.io.tests.flowsheets import demo_model
 
     m = demo_model()
-    w = ModelWriter(m, include=ModelWriter.ALL)
+    w = ModelWriter(m)
     if len(sys.argv) > 1 and sys.argv[1] == "json":
         text = True
         ext = "json"
@@ -252,7 +333,7 @@ if __name__ == "__main__":
     print(fname)
     #
     mode = "r" if text else "rb"
-    r = ModelReader()
+    r = ModelReader(handler=BaseModelHandler(m))
     with open(fname, mode) as f:
         t0 = time.time()
         n = r.read(f, text=text)
