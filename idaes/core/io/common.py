@@ -14,13 +14,14 @@ from typing import Any, Iterable, Optional
 import time
 
 # third-party
-from google.protobuf import json_format
+# from google.protobuf import json_format
 from pyomo.common.config import ConfigDict, ConfigList, ConfigValue
 from pyomo.core.base.component import ComponentData
 from pyomo.core.base.param import ParamData, IndexedParam
 from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
-from pyomo.environ import Var, Param, Block, Suffix
+from pyomo.environ import Var, Param, Block, value
+from pyomo.core.base.suffix import Suffix, SuffixDataType
 from pyomo.network.arc import ScalarArc, IndexedArc, Arc
 import msgpack
 
@@ -40,9 +41,21 @@ _log = getLogger(__name__)
 
 FORMAT_VERSION = "0.0.1"
 
-SECT_VAR, SECT_VAR_B = "variable", b"variable"
+SECT_BLOCK, SECT_BLOCK_B = "block", b"block"
 SECT_SUFFIX, SECT_SUFFIX_B = "suffix", b"suffix"
+SECT_ARC, SECT_ARC_B = "arc", b"arc"
+SECT_CONFIG, SECT_CONFIG_B = "config", b"config"
+SECT_BLOCK2, SECT_BLOCK2_B = "extra_blocks", b"extra_blocks"
+
 BT_OTHER, BT_VAR, BT_PARAM = 0, 1, 2
+
+
+def try_float(x):
+    try:
+        return float(x)
+    except ValueError:
+        print(f"@@ not float: {x}")
+        return x
 
 
 class ModelWriter:
@@ -69,12 +82,23 @@ class ModelWriter:
     def write(self, stream: IOBase, text=False):
         m = self._model
         dump = self._dump_json_line if text else msgpack.pack
+        if not self._opt_all_blocks and (self._opt_arc or self._opt_suffix):
+            var_block_ids = set()
+            if self._opt_arc:
+                arc_blocks = set()
+            if self._opt_suffix:
+                sfx_block_names = set()
+        else:
+            var_block_ids, arc_blocks, sfx_block_names = None, None, None
         # metadata
         meta = {"version": FORMAT_VERSION, "ts": time.time()}
         dump(meta, stream)
         # variables
-        dump({"section": SECT_VAR}, stream)
+        dump({"section": SECT_BLOCK}, stream)
         for c in m.component_objects():
+            id_c = id(c)
+            if var_block_ids is not None:
+                var_block_ids.add(id_c)
             if c.is_variable_type():
                 subtype = BT_VAR
             elif c.is_parameter_type():
@@ -82,9 +106,9 @@ class ModelWriter:
             else:
                 subtype = BT_OTHER
             # subtype, id, name, parent_id, [is_indexed, num]
-            b = [subtype, id(c), c.name, id(c.parent_block())]
+            b = [subtype, id_c, c.name, id(c.parent_block())]
             if subtype == BT_OTHER:
-                if self._opt_arc or self._opt_all_blocks:
+                if self._opt_all_blocks:
                     dump(b, stream)
             else:
                 items = []
@@ -107,10 +131,39 @@ class ModelWriter:
         if self._opt_suffix:
             dump({"section": SECT_SUFFIX}, stream)
             for c in m.component_objects(Suffix):
-                print("@@ SUFFIX")
+                parent_id = id(c.parent_block())
+                n = len(c.keys())
+                dtype = c.datatype
+                item = (parent_id, c.local_name, int(c.direction), dtype, n)
+                dump(item, stream)
+                for pyo_k, pyo_v in c.items():
+                    k = pyo_k.name
+                    v = int(pyo_v) if dtype == SuffixDataType.INT else float(pyo_v)
+                    dump((k, v), stream)
+                    if sfx_block_names is not None:
+                        sfx_block_names.add(k)
         if self._opt_arc:
+            dump({"section": SECT_ARC}, stream)
             for c in m.component_objects(Arc):
-                src_id, dst = c.source.parent_block().name, c.dest.parent_block()
+                src_id, dst_id = id(c.source.parent_block()), id(c.dest.parent_block())
+                dump((c.local_name, src_id, dst_id), stream)
+                if arc_blocks is not None:
+                    arc_blocks.add(c)
+        # extra blocks for arc/suffix references
+        if var_block_ids:
+            dump({"section": SECT_BLOCK2}, stream)
+            for nm in sfx_block_names:
+                b = m.find_component(nm)
+                block_id = id(b)
+                if block_id not in var_block_ids:
+                    item = (block_id, nm)
+                    dump(item, stream)
+            for b in arc_blocks:
+                for block_ref in b.src, b.dest:
+                    block_id = id(block_ref)
+                    if block_id not in var_block_ids:
+                        item = (block_id, nm)
+                        dump(item, stream)
 
     @staticmethod
     def _dump_json_line(obj, stream):
@@ -123,6 +176,7 @@ def dump(obj, stream):
 
 
 class ModelReader:
+
     def __init__(self, handler=None):
         self._stream = None
         if handler is None:
@@ -130,17 +184,36 @@ class ModelReader:
         else:
             self._h = handler
 
+    ST_START, ST_BLOCK, ST_BLOCK2 = 1, 2, 8
+    ST_DATA_VAR, ST_DATA_PARAM = 3, 4
+    ST_SUFFIX, ST_SUFFIX_ITEM = 5, 6
+    ST_ARC = 7
+
     def read(self, stream: IOBase, text=False):
-        var_state = {BT_VAR: 3, BT_PARAM: 4, BT_OTHER: 2}
+        var_state = {
+            BT_VAR: self.ST_DATA_VAR,
+            BT_PARAM: self.ST_DATA_PARAM,
+            BT_OTHER: self.ST_BLOCK,
+        }
         self._stream = stream
         if text:
             obj_stream = self._read_json_lines
             section_key = "section"
-            section_map = {SECT_VAR: 2, SECT_SUFFIX: 5}
+            section_map = {
+                SECT_BLOCK: self.ST_BLOCK,
+                SECT_BLOCK2: self.ST_BLOCK2,
+                SECT_SUFFIX: self.ST_SUFFIX,
+                SECT_ARC: self.ST_ARC,
+            }
         else:
             obj_stream = self._read_msgpack
             section_key = b"section"
-            section_map = {SECT_VAR_B: 2, SECT_SUFFIX_B: 5}
+            section_map = {
+                SECT_BLOCK_B: self.ST_BLOCK,
+                SECT_BLOCK2_B: self.ST_BLOCK2,
+                SECT_SUFFIX_B: self.ST_SUFFIX,
+                SECT_ARC_B: self.ST_ARC,
+            }
 
         ext_count = 0
         n, i = 0, 0
@@ -149,12 +222,13 @@ class ModelReader:
 
         obj = next(obj_iter)
         self._h.metadata(obj)
-        state, count = 1, 1
+        state, count = self.ST_START, 1
+        in_block_data = False
 
         for obj in obj_iter:
             # generic check for new section
             if isinstance(obj, dict):
-                if 3 <= state <= 4:
+                if in_block_data:
                     raise ValueError("Section header in middle of block data")
                 key = obj[section_key]
                 try:
@@ -162,25 +236,47 @@ class ModelReader:
                 except KeyError:
                     state, ext_name, ext_count = -1, key, 0
             # other known states
-            elif state == 2:
+            elif state == self.ST_BLOCK:
                 data_type, block_id = obj[0], obj[1]
                 nm = obj[2] if text else obj[2].decode()
                 if data_type == BT_OTHER:
-                    self._h.block(block_id, nm, obj[3])
+                    self._h.var_block(block_id, nm, obj[3])
                 else:
-                    self._h.block(block_id, nm, *obj[3:])
+                    self._h.var_block(block_id, nm, *obj[3:])
+                    in_block_data = True
                 state = var_state[data_type]
                 n, i = obj[-1], 0
-            elif 3 <= state <= 4:
-                if state == 3:
+            elif in_block_data:
+                if state == self.ST_DATA_VAR:
                     self._h.block_data_var(block_id, *obj)
                 else:
                     self._h.block_data_param(block_id, *obj)
                 i += 1
                 if i == n:
-                    state = 2  # next var block
-            elif state == 5:  # suffix
-                self._h.suffix(obj)
+                    state = self.ST_BLOCK  # next var block
+                    in_block_data = False
+            elif state == self.ST_SUFFIX:
+                # parent_id, c.local_name, int(c.direction), dtype, n
+                suffix_num, suffix_count = obj[-1], 0
+                suffix_is_int = obj[3] == SuffixDataType.INT
+                suffix_obj = obj[:-1]
+                suffix_values = []
+                state = self.ST_SUFFIX_ITEM
+            elif state == self.ST_SUFFIX_ITEM:
+                # key, value
+                k, sfx_v = obj
+                v = int(sfx_v) if suffix_is_int else float(sfx_v)
+                suffix_values.append((k, v))
+                suffix_count += 1
+                if suffix_count == suffix_num:
+                    suffix_obj.append(suffix_values)
+                    self._h.suffix(*suffix_obj)
+                    state = self.ST_SUFFIX  # next suffix
+            elif state == self.ST_ARC:
+                name = obj[0] if text else obj[0].decode()
+                self._h.arc(name, obj[1], obj[2])
+            elif state == self.ST_BLOCK2:
+                self._h.extra_block(*obj)
             # other state => extension
             else:
                 self._h.ext(ext_name, obj, ext_count)
@@ -203,7 +299,7 @@ class BaseHandler:
     def metadata(self, d):
         pass
 
-    def block(
+    def var_block(
         self,
         block_id: int,
         name: str,
@@ -211,6 +307,9 @@ class BaseHandler:
         is_indexed: bool = False,
         num: int = 0,
     ):
+        pass
+
+    def extra_block(self, block_id: int, name: str):
         pass
 
     def block_data_var(
@@ -228,7 +327,17 @@ class BaseHandler:
     def block_data_param(self, block_id: int, index: int, value: float):
         pass
 
-    def suffix(self, d):
+    def suffix(
+        self,
+        parent_id: int,
+        name: str,
+        direction: int,
+        dtype: int,
+        values: list[int | float],
+    ):
+        pass
+
+    def arc(self, name: str, src_block_id: int, dst_block_id: int):
         pass
 
     def ext(self, name, obj, count):
@@ -239,8 +348,9 @@ class BaseModelHandler(BaseHandler):
     def __init__(self, model: Block):
         self._m = model
         self._cur_block = None
+        self._block_id_map = {}
 
-    def block(
+    def var_block(
         self,
         block_id: int,
         name: str,
@@ -248,31 +358,25 @@ class BaseModelHandler(BaseHandler):
         is_indexed: bool = False,
         num: int = 0,
     ):
-        b = self._m
-        nm = str(name)
-        parts = nm.split(".")
-        n, i = len(parts), 0
-        last = n - 1
-        while i < n:
-            if i != last and parts[i + 1][-1] == "]":
-                # foo.bar[0.0].baz -> i='bar[0', i+1='0]'
-                lbr = parts[i].rfind("[")
-                c_name = parts[i][:lbr]
-                b = getattr(b, c_name)
-                c_idx = float(parts[i][lbr + 1 :] + "." + parts[i + 1][:-1])
-                b = b[c_idx]
-                i += 2
-            else:
-                b = getattr(b, parts[i])
-                i += 1
-        self.model_block(b, block_id, is_indexed, num)
+        b = self._m.find_component(name)
+        self.model_var_block(b, block_id, is_indexed, num)
 
-    def model_block(self, b, block_id, is_indexed, num):
+    def model_var_block(self, b, block_id, is_indexed, num):
         self._cur_block = b
         self._cur_block_id = block_id
         self._cur_block_ix = is_indexed
         self._cur_block_num = num
         self._cur_data_block_count = 0
+
+    def extra_block(self, block_id: int, name: str):
+        b = self._m.find_component(name)
+        self._block_id_map[block_id] = b
+
+    ## TODO: Arc and Suffix, store them up until the end
+    ## TODO: add some sort of close() that will then
+    ## TODO  run back through stored arcs and suffixes and resolve them
+    ## TODO: to blocks, then call model_{arc,suffix} which the user can
+    ## TODO: impmlement to eg set the values
 
     def block_data_var(
         self,
@@ -311,12 +415,22 @@ class BaseModelHandler(BaseHandler):
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse, sys
     from idaes.core.io.tests.flowsheets import demo_model
+    from prommis.uky import uky_flowsheet as uky_flowsheet
 
-    m = demo_model()
-    w = ModelWriter(m)
-    if len(sys.argv) > 1 and sys.argv[1] == "json":
+    p = argparse.ArgumentParser()
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--model", choices=["demo", "uky"])
+    args = p.parse_args()
+
+    if args.model == "demo":
+        m = demo_model()
+    else:
+        m = uky_flowsheet.build()
+    w = ModelWriter(m, include=ModelWriter.SUFFIXES | ModelWriter.ARCS)
+
+    if args.json:
         text = True
         ext = "json"
         mode = "w"
@@ -324,6 +438,7 @@ if __name__ == "__main__":
         text = False
         ext = "msgp"
         mode = "wb"
+
     fname = f"model.{ext}"
     with open(fname, mode) as f:
         t0 = time.time()
@@ -340,3 +455,25 @@ if __name__ == "__main__":
         t1 = time.time()
     print(f"read {(t1 - t0):.6f}s")
     print(n)
+
+    # nm = str(name)
+    # parts = nm.split(".")
+    # n, i = len(parts), 0
+    # last = n - 1
+
+    # while i < n:
+    #     if i != last and parts[i + 1][-1] == "]":
+    #         # foo.bar[0.0].baz -> i='bar[0', i+1='0]'
+    #         lbr = parts[i].rfind("[")
+    #         c_name = parts[i][:lbr]
+    #         b = getattr(b, c_name)
+    #         idx_expr = parts[i][lbr + 1 :] + "." + parts[i + 1][:-1]
+    #         if "," in idx_expr:
+    #             idx_list = map(try_float, idx_expr.split(","))
+    #             b = b[*idx_list]
+    #         else:
+    #             b = b[try_float(idx_expr)]
+    #         i += 2
+    #     else:
+    #         b = getattr(b, parts[i])
+    #         i += 1
