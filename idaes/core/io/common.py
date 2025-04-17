@@ -283,6 +283,8 @@ class ModelReader:
                 ext_count += 1
             count += 1
 
+        self._h.finalize()
+
         return count
 
     def _read_json_lines(self):
@@ -296,6 +298,9 @@ class ModelReader:
 
 
 class BaseHandler:
+    def finalize(self):
+        pass
+
     def metadata(self, d):
         pass
 
