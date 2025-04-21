@@ -21,7 +21,7 @@ from pyomo.core.base.param import ParamData, IndexedParam
 from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
 from pyomo.environ import Var, Param, Block, value
-from pyomo.core.base.suffix import Suffix, SuffixDataType
+from pyomo.core.base.suffix import Suffix, SuffixDataType, SuffixDirection
 from pyomo.network.arc import ScalarArc, IndexedArc, Arc
 import msgpack
 
@@ -97,8 +97,6 @@ class ModelWriter:
         dump({"section": SECT_BLOCK}, stream)
         for c in m.component_objects():
             id_c = id(c)
-            if var_block_ids is not None:
-                var_block_ids.add(id_c)
             if c.is_variable_type():
                 subtype = BT_VAR
             elif c.is_parameter_type():
@@ -110,7 +108,11 @@ class ModelWriter:
             if subtype == BT_OTHER:
                 if self._opt_all_blocks:
                     dump(b, stream)
+                    if var_block_ids is not None:
+                        var_block_ids.add(id_c)
             else:
+                if var_block_ids is not None:
+                    var_block_ids.add(id_c)
                 items = []
                 for index in c:
                     v = c[index]
@@ -145,7 +147,8 @@ class ModelWriter:
         if self._opt_arc:
             dump({"section": SECT_ARC}, stream)
             for c in m.component_objects(Arc):
-                src_id, dst_id = id(c.source.parent_block()), id(c.dest.parent_block())
+                # src_id, dst_id = id(c.source.parent_block()), id(c.dest.parent_block())
+                src_id, dst_id = id(c.source), id(c.dest)
                 dump((c.local_name, src_id, dst_id), stream)
                 if arc_blocks is not None:
                     arc_blocks.add(c)
@@ -154,15 +157,16 @@ class ModelWriter:
             dump({"section": SECT_BLOCK2}, stream)
             for nm in sfx_block_names:
                 b = m.find_component(nm)
-                block_id = id(b)
+                block_id = id(b.parent_block())
                 if block_id not in var_block_ids:
                     item = (block_id, nm)
                     dump(item, stream)
             for b in arc_blocks:
-                for block_ref in b.src, b.dest:
-                    block_id = id(block_ref)
-                    if block_id not in var_block_ids:
-                        item = (block_id, nm)
+                missing = False
+                for endpt in b.src, b.dest:
+                    endpt_id = id(endpt)
+                    if endpt_id not in var_block_ids:
+                        item = (endpt_id, endpt.name)
                         dump(item, stream)
 
     @staticmethod
@@ -248,9 +252,9 @@ class ModelReader:
                 n, i = obj[-1], 0
             elif in_block_data:
                 if state == self.ST_DATA_VAR:
-                    self._h.block_data_var(block_id, *obj)
+                    self._h.var_block_data(block_id, *obj)
                 else:
-                    self._h.block_data_param(block_id, *obj)
+                    self._h.param_block_data(block_id, *obj)
                 i += 1
                 if i == n:
                     state = self.ST_BLOCK  # next var block
@@ -260,6 +264,8 @@ class ModelReader:
                 suffix_num, suffix_count = obj[-1], 0
                 suffix_is_int = obj[3] == SuffixDataType.INT
                 suffix_obj = obj[:-1]
+                if not text:
+                    suffix_obj[1] = suffix_obj[1].decode()
                 suffix_values = []
                 state = self.ST_SUFFIX_ITEM
             elif state == self.ST_SUFFIX_ITEM:
@@ -276,7 +282,8 @@ class ModelReader:
                 name = obj[0] if text else obj[0].decode()
                 self._h.arc(name, obj[1], obj[2])
             elif state == self.ST_BLOCK2:
-                self._h.extra_block(*obj)
+                nm = obj[1] if text else obj[1].decode()
+                self._h.extra_block(obj[0], nm)
             # other state => extension
             else:
                 self._h.ext(ext_name, obj, ext_count)
@@ -314,10 +321,7 @@ class BaseHandler:
     ):
         pass
 
-    def extra_block(self, block_id: int, name: str):
-        pass
-
-    def block_data_var(
+    def var_block_data(
         self,
         block_id: int,
         index: float | str,
@@ -329,7 +333,10 @@ class BaseHandler:
     ):
         pass
 
-    def block_data_param(self, block_id: int, index: int, value: float):
+    def param_block_data(self, block_id: int, index: int, value: float):
+        pass
+
+    def extra_block(self, block_id: int, name: str):
         pass
 
     def suffix(
@@ -349,11 +356,87 @@ class BaseHandler:
         pass
 
 
+class ModelHandler:
+    def model_var(
+        self,
+        data_block: Block,
+        value: float | bool,
+        fixed: bool,
+        stale: bool,
+        lb: Optional[float] = None,
+        ub: Optional[float] = None,
+    ):
+        pass
+
+    def model_param(
+        self,
+        data_block: Block,
+        value: float | bool,
+    ):
+        pass
+
+    def model_arc(self, name: str, src: Block, dst: Block):
+        pass
+
+    def model_suffix(
+        self,
+        ref: Block,
+        name: str,
+        direction: SuffixDirection,
+        values_type: SuffixDataType,
+        values: list[int | float],
+    ):
+        pass
+
+
+class NoopModelHandler(ModelHandler):
+    pass
+
+
+class PrintHandler(ModelHandler):
+    def __init__(self):
+        self.section("Model", "=")
+        self._var = False
+        self._param = False
+
+    def model_var(
+        self,
+        data_block: Block,
+        value: float | bool,
+        fixed: bool,
+        stale: bool,
+        lb: Optional[float] = None,
+        ub: Optional[float] = None,
+    ):
+        if not self._var:
+            self.section("Variables", "-")
+            self._var = True
+        print(f"{data_block.name} = {value} [{lb} .. {ub}]")
+
+    def model_param(
+        self,
+        data_block: Block,
+        value: float | bool,
+    ):
+        if not self._param:
+            self.section("Parameters", "-")
+            self._param = True
+        print(f"{data_block.name} = {value}")
+
+    def section(self, s, delim):
+        n = len(s) + 2
+        print("+" + delim * n + "+")
+        print("| " + s + " |")
+        print("+" + delim * n + "+")
+
+
 class BaseModelHandler(BaseHandler):
-    def __init__(self, model: Block):
+    def __init__(self, model: Block, model_handler: ModelHandler = None):
         self._m = model
+        self._mh = model_handler or NoopModelHandler()
         self._cur_block = None
         self._block_id_map = {}
+        self._stored_suffixes, self._stored_arcs = [], []
 
     def var_block(
         self,
@@ -364,26 +447,14 @@ class BaseModelHandler(BaseHandler):
         num: int = 0,
     ):
         b = self._m.find_component(name)
-        self.model_var_block(b, block_id, is_indexed, num)
-
-    def model_var_block(self, b, block_id, is_indexed, num):
+        self._block_id_map[block_id] = b
         self._cur_block = b
         self._cur_block_id = block_id
         self._cur_block_ix = is_indexed
         self._cur_block_num = num
         self._cur_data_block_count = 0
 
-    def extra_block(self, block_id: int, name: str):
-        b = self._m.find_component(name)
-        self._block_id_map[block_id] = b
-
-    ## TODO: Arc and Suffix, store them up until the end
-    ## TODO: add some sort of close() that will then
-    ## TODO  run back through stored arcs and suffixes and resolve them
-    ## TODO: to blocks, then call model_{arc,suffix} which the user can
-    ## TODO: impmlement to eg set the values
-
-    def block_data_var(
+    def var_block_data(
         self,
         block_id: int,
         index: float | str,
@@ -397,26 +468,67 @@ class BaseModelHandler(BaseHandler):
             raise ValueError("Unexpected variable")
         if self._cur_data_block_count >= self._cur_block_num:
             raise ValueError(
-                f"Too many data blocks: {self._cur_data_block_count} >= {self._cur_block_num}"
+                f"Too many variable data blocks: {self._cur_data_block_count} >= {self._cur_block_num}"
             )
         if self._cur_block_ix:
             d = self._cur_block[index]
         else:
             d = self._cur_block[None]
-        self.model_block_data(d, value, fixed, stale, lb, ub)
+        self._mh.model_var(d, value, fixed, stale, lb, ub)
         self._cur_data_block_count += 1
 
-    def model_block_data(
+    def param_block_data(self, block_id, index, value):
+        if self._cur_block is None:
+            raise ValueError("Unexpected parameter")
+        if self._cur_data_block_count >= self._cur_block_num:
+            raise ValueError(
+                f"Too many parameter data blocks: {self._cur_data_block_count} >= {self._cur_block_num}"
+            )
+        if self._cur_block_ix:
+            d = self._cur_block[index]
+        else:
+            d = self._cur_block[None]
+        self._mh.model_param(d, value)
+        self._cur_data_block_count += 1
+
+    def extra_block(self, block_id: int, name: str):
+        b = self._m.find_component(name)
+        self._block_id_map[block_id] = b
+
+    def suffix(
         self,
-        data_block: Block,
-        value: float | bool,
-        fixed: bool,
-        stale: bool,
-        lb: Optional[float] = None,
-        ub: Optional[float] = None,
+        parent_id: int,
+        name: str,
+        direction: int,
+        dtype: int,
+        values: list[int | float],
     ):
-        # print(f"set value {value} on data block {data_block}")
-        pass
+        self._stored_suffixes.append((parent_id, name, direction, dtype, values))
+
+    def arc(self, name: str, src_block_id: int, dst_block_id: int):
+        self._stored_arcs.append((name, src_block_id, dst_block_id))
+
+    def finalize(self):
+        for parent_id, name, direction, dtype, values in self._stored_suffixes:
+            try:
+                ref_block = self._block_id_map[parent_id]
+            except KeyError:
+                _log.error(f"Block for suffix '{name}' not found")
+                continue
+            self._mh.model_suffix(ref_block, name, direction, dtype, values)
+
+        for name, src_block_id, dst_block_id in self._stored_arcs:
+            try:
+                src_block = self._block_id_map[src_block_id]
+                try:
+                    dst_block = self._block_id_map[src_block_id]
+                except KeyError:
+                    _log.error(f"arc destination block ({dst_block_id}) not found")
+                    continue
+            except KeyError:
+                _log.error(f"arc source block ({src_block_id}) not found")
+                continue
+            self._mh.model_arc(name, src_block, dst_block)
 
 
 if __name__ == "__main__":
@@ -427,6 +539,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--json", action="store_true")
     p.add_argument("--model", choices=["demo", "uky"])
+    p.add_argument("--print", "-p", action="store_true")
     args = p.parse_args()
 
     if args.model == "demo":
@@ -453,7 +566,8 @@ if __name__ == "__main__":
     print(fname)
     #
     mode = "r" if text else "rb"
-    r = ModelReader(handler=BaseModelHandler(m))
+    model_handler = PrintHandler() if args.print else None
+    r = ModelReader(handler=BaseModelHandler(m, model_handler=model_handler))
     with open(fname, mode) as f:
         t0 = time.time()
         n = r.read(f, text=text)
