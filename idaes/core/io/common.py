@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import namedtuple
 from io import IOBase
 import logging
+import pickle
 import re
 from statistics import median
 from typing import Any, Iterable, Optional
@@ -83,13 +84,14 @@ class ModelWriter:
         m = self._model
         dump = self._dump_json_line if text else msgpack.pack
         if not self._opt_all_blocks and (self._opt_arc or self._opt_suffix):
-            var_block_ids = set()
+            extra_block_ids = set()
             if self._opt_arc:
                 arc_blocks = set()
             if self._opt_suffix:
                 sfx_block_names = set()
         else:
-            var_block_ids, arc_blocks, sfx_block_names = None, None, None
+            extra_block_ids, arc_blocks, sfx_block_names = None, None, None
+        configs = {} if self._opt_config else None
         # metadata
         meta = {"version": FORMAT_VERSION, "ts": time.time()}
         dump(meta, stream)
@@ -106,13 +108,17 @@ class ModelWriter:
             # subtype, id, name, parent_id, [is_indexed, num]
             b = [subtype, id_c, c.name, id(c.parent_block())]
             if subtype == BT_OTHER:
-                if self._opt_all_blocks:
+                do_config = self._opt_config and hasattr(c, "CONFIG")
+                if self._opt_all_blocks or do_config:
                     dump(b, stream)
-                    if var_block_ids is not None:
-                        var_block_ids.add(id_c)
+                    if do_config:
+                        values = list(c.config.user_values())
+                        configs[id_c] = pickle.dumps(values)
+                    if extra_block_ids is not None:
+                        extra_block_ids.add(id_c)
             else:
-                if var_block_ids is not None:
-                    var_block_ids.add(id_c)
+                if extra_block_ids is not None:
+                    extra_block_ids.add(id_c)
                 items = []
                 for index in c:
                     v = c[index]
@@ -152,20 +158,24 @@ class ModelWriter:
                 dump((c.local_name, src_id, dst_id), stream)
                 if arc_blocks is not None:
                     arc_blocks.add(c)
+        if self._opt_config:
+            dump({"section": SECT_CONFIG}, stream)
+            for k, v in configs.items():
+                dump((k, v), stream)
         # extra blocks for arc/suffix references
-        if var_block_ids:
+        if extra_block_ids:
             dump({"section": SECT_BLOCK2}, stream)
             for nm in sfx_block_names:
                 b = m.find_component(nm)
                 block_id = id(b.parent_block())
-                if block_id not in var_block_ids:
+                if block_id not in extra_block_ids:
                     item = (block_id, nm)
                     dump(item, stream)
             for b in arc_blocks:
                 missing = False
                 for endpt in b.src, b.dest:
                     endpt_id = id(endpt)
-                    if endpt_id not in var_block_ids:
+                    if endpt_id not in extra_block_ids:
                         item = (endpt_id, endpt.name)
                         dump(item, stream)
 
@@ -188,10 +198,11 @@ class ModelReader:
         else:
             self._h = handler
 
-    ST_START, ST_BLOCK, ST_BLOCK2 = 1, 2, 8
+    ST_START, ST_BLOCK, ST_BLOCK2 = 1, 2, 9
     ST_DATA_VAR, ST_DATA_PARAM = 3, 4
     ST_SUFFIX, ST_SUFFIX_ITEM = 5, 6
     ST_ARC = 7
+    ST_CONFIG = 8
 
     def read(self, stream: IOBase, text=False):
         var_state = {
@@ -208,6 +219,7 @@ class ModelReader:
                 SECT_BLOCK2: self.ST_BLOCK2,
                 SECT_SUFFIX: self.ST_SUFFIX,
                 SECT_ARC: self.ST_ARC,
+                SECT_CONFIG: self.ST_CONFIG,
             }
         else:
             obj_stream = self._read_msgpack
@@ -217,6 +229,7 @@ class ModelReader:
                 SECT_BLOCK2_B: self.ST_BLOCK2,
                 SECT_SUFFIX_B: self.ST_SUFFIX,
                 SECT_ARC_B: self.ST_ARC,
+                SECT_CONFIG_B: self.ST_CONFIG,
             }
 
         ext_count = 0
@@ -281,6 +294,8 @@ class ModelReader:
             elif state == self.ST_ARC:
                 name = obj[0] if text else obj[0].decode()
                 self._h.arc(name, obj[1], obj[2])
+            elif state == self.ST_CONFIG:
+                self._h.config(obj[0], obj[1])
             elif state == self.ST_BLOCK2:
                 nm = obj[1] if text else obj[1].decode()
                 self._h.extra_block(obj[0], nm)
@@ -352,6 +367,9 @@ class BaseHandler:
     def arc(self, name: str, src_block_id: int, dst_block_id: int):
         pass
 
+    def config(self, block_id: int, data: str):
+        pass
+
     def ext(self, name, obj, count):
         pass
 
@@ -378,6 +396,9 @@ class ModelHandler:
     def model_arc(self, name: str, src: Block, dst: Block):
         pass
 
+    def model_config(self, target: Block, values: list[ConfigValue]):
+        pass
+
     def model_suffix(
         self,
         ref: Block,
@@ -398,6 +419,7 @@ class PrintHandler(ModelHandler):
         self.section("Model", "=")
         self._var = False
         self._param = False
+        self._config = False
 
     def model_var(
         self,
@@ -411,6 +433,12 @@ class PrintHandler(ModelHandler):
         if not self._var:
             self.section("Variables", "-")
             self._var = True
+        if value is None:
+            value = "\u2205"
+        if lb is None:
+            lb = "-\u221e"
+        if ub is None:
+            ub = "\u221e"
         print(f"{data_block.name} = {value} [{lb} .. {ub}]")
 
     def model_param(
@@ -421,6 +449,8 @@ class PrintHandler(ModelHandler):
         if not self._param:
             self.section("Parameters", "-")
             self._param = True
+        if value is None:
+            value = "-"
         print(f"{data_block.name} = {value}")
 
     def section(self, s, delim):
@@ -428,6 +458,15 @@ class PrintHandler(ModelHandler):
         print("+" + delim * n + "+")
         print("| " + s + " |")
         print("+" + delim * n + "+")
+
+    def model_config(self, target, values):
+        if not self._config:
+            self.section("Config", "-")
+            self._config = True
+        if values:
+            print(f">>> {target.name}")
+            for v in values:
+                value.display(indent_spacing=2)
 
 
 class BaseModelHandler(BaseHandler):
@@ -437,6 +476,7 @@ class BaseModelHandler(BaseHandler):
         self._cur_block = None
         self._block_id_map = {}
         self._stored_suffixes, self._stored_arcs = [], []
+        self._stored_configs = []
 
     def var_block(
         self,
@@ -508,6 +548,10 @@ class BaseModelHandler(BaseHandler):
     def arc(self, name: str, src_block_id: int, dst_block_id: int):
         self._stored_arcs.append((name, src_block_id, dst_block_id))
 
+    def config(self, block_id: int, data: str):
+        values = pickle.loads(data)
+        self._stored_configs.append((block_id, values))
+
     def finalize(self):
         for parent_id, name, direction, dtype, values in self._stored_suffixes:
             try:
@@ -530,6 +574,14 @@ class BaseModelHandler(BaseHandler):
                 continue
             self._mh.model_arc(name, src_block, dst_block)
 
+        for cfg_block_id, obj in self._stored_configs:
+            try:
+                cfg_block = self._block_id_map[cfg_block_id]
+            except KeyError:
+                _log.error(f"Block for config ({cfg_block_id}) not found")
+                continue
+            self._mh.model_config(cfg_block, obj)
+
 
 if __name__ == "__main__":
     import argparse, sys
@@ -546,7 +598,9 @@ if __name__ == "__main__":
         m = demo_model()
     else:
         m = uky_flowsheet.build()
-    w = ModelWriter(m, include=ModelWriter.SUFFIXES | ModelWriter.ARCS)
+    w = ModelWriter(
+        m, include=ModelWriter.SUFFIXES | ModelWriter.ARCS | ModelWriter.CONFIGS
+    )
 
     if args.json:
         text = True
