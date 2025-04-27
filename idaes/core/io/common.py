@@ -5,6 +5,7 @@ IDAES model I/O (serialization).
 
 # stdlib
 from __future__ import annotations
+from base64 import b64encode, b64decode
 from collections import namedtuple
 from io import IOBase
 import logging
@@ -41,6 +42,8 @@ __author__ = "Dan Gunter (LBNL)"
 _log = getLogger(__name__)
 
 FORMAT_VERSION = "0.0.1"
+
+DEFAULT_ENCODING = "utf-8"
 
 SECT_BLOCK, SECT_BLOCK_B = "block", b"block"
 SECT_SUFFIX, SECT_SUFFIX_B = "suffix", b"suffix"
@@ -79,6 +82,7 @@ class ModelWriter:
         self._opt_config = bool(include & self.CONFIGS)
         self._opt_all_blocks = bool(include & self.ALL_BLOCKS)
         self._model = model
+        self._dbg = _log.isEnabledFor(logging.DEBUG)
 
     def write(self, stream: IOBase, text=False):
         m = self._model
@@ -112,8 +116,9 @@ class ModelWriter:
                 if self._opt_all_blocks or do_config:
                     dump(b, stream)
                     if do_config:
-                        values = list(c.config.user_values())
-                        configs[id_c] = pickle.dumps(values)
+                        config_data = self._serialize_config(c.config, text)
+                        if config_data:
+                            configs[id_c] = config_data
                     if extra_block_ids is not None:
                         extra_block_ids.add(id_c)
             else:
@@ -178,6 +183,38 @@ class ModelWriter:
                     if endpt_id not in extra_block_ids:
                         item = (endpt_id, endpt.name)
                         dump(item, stream)
+
+    def _serialize_config(self, cfg, text: bool):
+        data = None
+        if isinstance(cfg, ConfigDict):
+            data = []
+            for k, v in cfg.items():
+                s = self._cpickle(v, text, self._dbg)
+                if s:
+                    data.append((k, s))
+        elif isinstance(cfg, ConfigList):
+            data = []
+            for v in cfg:
+                s = self._cpickle(v, text, self._dbg)
+                if s:
+                    data.append((None, s))
+        else:  # ConfigValue
+            s = self._cpickle(v, text, self._dbg)
+            if s:
+                data = [(None, s)]
+        return data
+
+    @staticmethod
+    def _cpickle(obj, text, dbg: bool) -> str:
+        try:
+            s = pickle.dumps(obj)
+            if text:
+                s = b64encode(s).decode()
+        except pickle.PicklingError as err:
+            s = None
+            if dbg:
+                _log.debug(f"PickleError: {err}")
+        return s
 
     @staticmethod
     def _dump_json_line(obj, stream):
@@ -295,7 +332,11 @@ class ModelReader:
                 name = obj[0] if text else obj[0].decode()
                 self._h.arc(name, obj[1], obj[2])
             elif state == self.ST_CONFIG:
-                self._h.config(obj[0], obj[1])
+                if text:
+                    values = [(k, b64decode(v)) for k, v in obj[1]]
+                else:
+                    values = [(k.decode(), v) for k, v in obj[1]]
+                self._h.config(obj[0], values)
             elif state == self.ST_BLOCK2:
                 nm = obj[1] if text else obj[1].decode()
                 self._h.extra_block(obj[0], nm)
@@ -465,8 +506,8 @@ class PrintHandler(ModelHandler):
             self._config = True
         if values:
             print(f">>> {target.name}")
-            for v in values:
-                value.display(indent_spacing=2)
+            for k, v in values:
+                print(f"  {k} = {v}")
 
 
 class BaseModelHandler(BaseHandler):
@@ -548,8 +589,8 @@ class BaseModelHandler(BaseHandler):
     def arc(self, name: str, src_block_id: int, dst_block_id: int):
         self._stored_arcs.append((name, src_block_id, dst_block_id))
 
-    def config(self, block_id: int, data: str):
-        values = pickle.loads(data)
+    def config(self, block_id: int, data: list[tuple[str, str]]):
+        values = [(k, pickle.loads(item)) for k, item in data]
         self._stored_configs.append((block_id, values))
 
     def finalize(self):
@@ -590,14 +631,35 @@ if __name__ == "__main__":
 
     p = argparse.ArgumentParser()
     p.add_argument("--json", action="store_true")
-    p.add_argument("--model", choices=["demo", "uky"])
+    p.add_argument(
+        "--model",
+        choices=["demo", "uky"],
+        default="uky",
+        help="Choose model (default=uky)",
+    )
     p.add_argument("--print", "-p", action="store_true")
+    p.add_argument(
+        "--verbose",
+        "-v",
+        action="count",
+        help="Increase verbosity (repeatable)",
+        default=0,
+    )
     args = p.parse_args()
+
+    if args.verbose >= 2:
+        _log.setLevel(logging.DEBUG)
+    elif args.verbose >= 1:
+        _log.setLevel(logging.INFO)
+    else:
+        _log.setLevel(logging.WARNING)
 
     if args.model == "demo":
         m = demo_model()
-    else:
+    elif args.model == "uky":
         m = uky_flowsheet.build()
+    else:
+        p.error(f"Unknown model: {args.model}")
     w = ModelWriter(
         m, include=ModelWriter.SUFFIXES | ModelWriter.ARCS | ModelWriter.CONFIGS
     )
