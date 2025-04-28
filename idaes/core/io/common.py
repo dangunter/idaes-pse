@@ -7,10 +7,10 @@ IDAES model I/O (serialization).
 from __future__ import annotations
 from base64 import b64encode, b64decode
 from collections import namedtuple
+import gzip
 from io import IOBase
 import logging
 import pickle
-import re
 from statistics import median
 from typing import Any, Iterable, Optional
 import time
@@ -41,7 +41,7 @@ __author__ = "Dan Gunter (LBNL)"
 
 _log = getLogger(__name__)
 
-FORMAT_VERSION = "0.0.1"
+FORMAT_VERSION = (1, 0, 0)
 
 DEFAULT_ENCODING = "utf-8"
 
@@ -53,27 +53,16 @@ SECT_BLOCK2, SECT_BLOCK2_B = "extra_blocks", b"extra_blocks"
 
 BT_OTHER, BT_VAR, BT_PARAM = 0, 1, 2
 
-
-def try_float(x):
-    try:
-        return float(x)
-    except ValueError:
-        print(f"@@ not float: {x}")
-        return x
+KEY_SECTION, KEY_SECTION_B = "section", b"section"
+KEY_VERSION = "version"
 
 
-class ModelWriter:
+class Writer:
+    """Serialize a model to an output stream."""
+
     # Flags for things to `include``
     SUFFIXES, ARCS, CONFIGS, ALL_BLOCKS = (1 << n for n in range(4))
     ALL = SUFFIXES | ARCS | CONFIGS
-    # Types
-    # ARC_TYPES = {ScalarArc, IndexedArc}
-    # BLOCK_TYPES = {
-    #     Var: 1,
-    #     Param: 2,
-    #     Suffix: 3,
-    #     ConfigDict: 4,
-    # }
 
     def __init__(self, model: Block, include: int = 0):
         self._m = model
@@ -84,8 +73,14 @@ class ModelWriter:
         self._model = model
         self._dbg = _log.isEnabledFor(logging.DEBUG)
 
-    def write(self, stream: IOBase, text=False):
+    def write(self, stream: IOBase, text: bool = False, gz: bool = False):
         m = self._model
+        if gz:
+            if text:
+                kwargs = {"mode": "wt", "encoding": DEFAULT_ENCODING}
+            else:
+                kwargs = {"mode": "wb"}
+            stream = gzip.open(stream, **kwargs)
         dump = self._dump_json_line if text else msgpack.pack
         if not self._opt_all_blocks and (self._opt_arc or self._opt_suffix):
             extra_block_ids = set()
@@ -97,10 +92,10 @@ class ModelWriter:
             extra_block_ids, arc_blocks, sfx_block_names = None, None, None
         configs = {} if self._opt_config else None
         # metadata
-        meta = {"version": FORMAT_VERSION, "ts": time.time()}
+        meta = {KEY_VERSION: FORMAT_VERSION, "ts": time.time()}
         dump(meta, stream)
         # variables
-        dump({"section": SECT_BLOCK}, stream)
+        dump({KEY_SECTION: SECT_BLOCK}, stream)
         for c in m.component_objects():
             id_c = id(c)
             if c.is_variable_type():
@@ -142,7 +137,7 @@ class ModelWriter:
                 for item in items:
                     dump(item, stream)
         if self._opt_suffix:
-            dump({"section": SECT_SUFFIX}, stream)
+            dump({KEY_SECTION: SECT_SUFFIX}, stream)
             for c in m.component_objects(Suffix):
                 parent_id = id(c.parent_block())
                 n = len(c.keys())
@@ -156,7 +151,7 @@ class ModelWriter:
                     if sfx_block_names is not None:
                         sfx_block_names.add(k)
         if self._opt_arc:
-            dump({"section": SECT_ARC}, stream)
+            dump({KEY_SECTION: SECT_ARC}, stream)
             for c in m.component_objects(Arc):
                 # src_id, dst_id = id(c.source.parent_block()), id(c.dest.parent_block())
                 src_id, dst_id = id(c.source), id(c.dest)
@@ -164,12 +159,12 @@ class ModelWriter:
                 if arc_blocks is not None:
                     arc_blocks.add(c)
         if self._opt_config:
-            dump({"section": SECT_CONFIG}, stream)
+            dump({KEY_SECTION: SECT_CONFIG}, stream)
             for k, v in configs.items():
                 dump((k, v), stream)
         # extra blocks for arc/suffix references
         if extra_block_ids:
-            dump({"section": SECT_BLOCK2}, stream)
+            dump({KEY_SECTION: SECT_BLOCK2}, stream)
             for nm in sfx_block_names:
                 b = m.find_component(nm)
                 block_id = id(b.parent_block())
@@ -223,15 +218,16 @@ class ModelWriter:
 
 
 def dump(obj, stream):
-    ModelWriter(obj).write(stream)
+    Writer(obj).write(stream)
 
 
-class ModelReader:
+class Reader:
+    """Deserialize a model from an input stream."""
 
     def __init__(self, handler=None):
         self._stream = None
         if handler is None:
-            self._h = BaseHandler()
+            self._h = DataHandler()
         else:
             self._h = handler
 
@@ -250,7 +246,7 @@ class ModelReader:
         self._stream = stream
         if text:
             obj_stream = self._read_json_lines
-            section_key = "section"
+            section_key = KEY_SECTION
             section_map = {
                 SECT_BLOCK: self.ST_BLOCK,
                 SECT_BLOCK2: self.ST_BLOCK2,
@@ -260,7 +256,7 @@ class ModelReader:
             }
         else:
             obj_stream = self._read_msgpack
-            section_key = b"section"
+            section_key = KEY_SECTION_B
             section_map = {
                 SECT_BLOCK_B: self.ST_BLOCK,
                 SECT_BLOCK2_B: self.ST_BLOCK2,
@@ -275,7 +271,11 @@ class ModelReader:
         obj_iter = obj_stream()
 
         obj = next(obj_iter)
-        self._h.metadata(obj)
+        if text:
+            meta_obj = obj
+        else:
+            meta_obj = {key.decode(): value for key, value in obj.items()}
+        self._h.metadata(meta_obj)
         state, count = self.ST_START, 1
         in_block_data = False
 
@@ -360,12 +360,26 @@ class ModelReader:
             yield msg
 
 
-class BaseHandler:
-    def finalize(self):
-        pass
+############
+# Handlers #
+############
 
-    def metadata(self, d):
-        pass
+
+class DataHandler:
+    def metadata(self, d: dict, skip_version_check=False):
+        if not skip_version_check:
+            try:
+                version = d[KEY_VERSION]
+            except KeyError:
+                raise ValueError("Missing version")
+            if version[0] != FORMAT_VERSION[0]:
+                raise ValueError(
+                    f"Major version mismatch, expected {FORMAT_VERSION[0]} != {version[0]}"
+                )
+            if version[1] != FORMAT_VERSION[1]:
+                raise ValueError(
+                    f"Minor version mismatch, expected {FORMAT_VERSION[1]} != {version[1]}"
+                )
 
     def var_block(
         self,
@@ -412,6 +426,9 @@ class BaseHandler:
         pass
 
     def ext(self, name, obj, count):
+        pass
+
+    def finalize(self):
         pass
 
 
@@ -510,7 +527,7 @@ class PrintHandler(ModelHandler):
                 print(f"  {k} = {v}")
 
 
-class BaseModelHandler(BaseHandler):
+class DataToModel(DataHandler):
     def __init__(self, model: Block, model_handler: ModelHandler = None):
         self._m = model
         self._mh = model_handler or NoopModelHandler()
@@ -624,6 +641,8 @@ class BaseModelHandler(BaseHandler):
             self._mh.model_config(cfg_block, obj)
 
 
+################
+
 if __name__ == "__main__":
     import argparse, sys
     from idaes.core.io.tests.flowsheets import demo_model
@@ -645,6 +664,7 @@ if __name__ == "__main__":
         help="Increase verbosity (repeatable)",
         default=0,
     )
+    p.add_argument("--gzip", "-z", action="store_true")
     args = p.parse_args()
 
     if args.verbose >= 2:
@@ -660,55 +680,43 @@ if __name__ == "__main__":
         m = uky_flowsheet.build()
     else:
         p.error(f"Unknown model: {args.model}")
-    w = ModelWriter(
-        m, include=ModelWriter.SUFFIXES | ModelWriter.ARCS | ModelWriter.CONFIGS
-    )
+    #    w = Writer(m, include=Writer.SUFFIXES | Writer.ARCS | Writer.CONFIGS)
+    w = Writer(m, include=0)
 
     if args.json:
         text = True
         ext = "json"
-        mode = "w"
+        if args.gzip:
+            mode = "wb"
+        else:
+            mode = "w"
     else:
         text = False
         ext = "msgp"
         mode = "wb"
+    if args.gzip:
+        ext += ".gz"
 
     fname = f"model.{ext}"
     with open(fname, mode) as f:
         t0 = time.time()
-        w.write(f, text=text)
+        w.write(f, text=text, gz=args.gzip)
         t1 = time.time()
-    print(f"write {(t1 - t0):.6f}s")
-    print(fname)
+    print(f"write: {(t1 - t0):.6f}s")
+    print(f"filename: {fname}")
     #
-    mode = "r" if text else "rb"
+    if args.gzip:
+        if text:
+            f = gzip.open(fname, mode="rt")
+        else:
+            f = gzip.open(fname, mode="r")
+    else:
+        mode = "r" if text else "rb"
+        f = open(fname, mode)
     model_handler = PrintHandler() if args.print else None
-    r = ModelReader(handler=BaseModelHandler(m, model_handler=model_handler))
-    with open(fname, mode) as f:
-        t0 = time.time()
-        n = r.read(f, text=text)
-        t1 = time.time()
-    print(f"read {(t1 - t0):.6f}s")
-    print(n)
-
-    # nm = str(name)
-    # parts = nm.split(".")
-    # n, i = len(parts), 0
-    # last = n - 1
-
-    # while i < n:
-    #     if i != last and parts[i + 1][-1] == "]":
-    #         # foo.bar[0.0].baz -> i='bar[0', i+1='0]'
-    #         lbr = parts[i].rfind("[")
-    #         c_name = parts[i][:lbr]
-    #         b = getattr(b, c_name)
-    #         idx_expr = parts[i][lbr + 1 :] + "." + parts[i + 1][:-1]
-    #         if "," in idx_expr:
-    #             idx_list = map(try_float, idx_expr.split(","))
-    #             b = b[*idx_list]
-    #         else:
-    #             b = b[try_float(idx_expr)]
-    #         i += 2
-    #     else:
-    #         b = getattr(b, parts[i])
-    #         i += 1
+    r = Reader(handler=DataToModel(m, model_handler=model_handler))
+    t0 = time.time()
+    n = r.read(f, text=text)
+    t1 = time.time()
+    print(f"read: {(t1 - t0):.6f}s")
+    print(f"records: {n}")
