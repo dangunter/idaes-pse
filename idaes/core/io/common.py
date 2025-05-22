@@ -3,8 +3,9 @@ This module has common classes, definitions, and functions for
 IDAES model I/O (serialization).
 """
 
-# stdlib
 from __future__ import annotations
+
+# stdlib
 from base64 import b64encode, b64decode
 from collections import namedtuple
 import gzip
@@ -16,15 +17,17 @@ from typing import Any, Iterable, Optional
 import time
 
 # third-party
-# from google.protobuf import json_format
+# pyomo
+from pyomo.environ import Block
 from pyomo.common.config import ConfigDict, ConfigList, ConfigValue
 from pyomo.core.base.component import ComponentData
 from pyomo.core.base.param import ParamData, IndexedParam
 from pyomo.core.base.var import IndexedVar, VarData, ScalarVar
 from pyomo.core.base.boolean_var import IndexedBooleanVar
-from pyomo.environ import Var, Param, Block, value
 from pyomo.core.base.suffix import Suffix, SuffixDataType, SuffixDirection
 from pyomo.network.arc import ScalarArc, IndexedArc, Arc
+
+# other
 import msgpack
 
 try:
@@ -32,14 +35,9 @@ try:
 except ImportError:
     import json
 
-# pkg
-from idaes.logger import getLogger
-
-# from idaes.core.io import pyomo_model_state_pb2 as pb
-
 __author__ = "Dan Gunter (LBNL)"
 
-_log = getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 FORMAT_VERSION = (1, 0, 0)
 
@@ -77,7 +75,7 @@ class Writer:
         m = self._model
         if gz:
             if text:
-                kwargs = {"mode": "wt", "encoding": DEFAULT_ENCODING}
+                kwargs: dict[str, str] = {"mode": "wt", "encoding": DEFAULT_ENCODING}
             else:
                 kwargs = {"mode": "wb"}
             stream = gzip.open(stream, **kwargs)
@@ -92,7 +90,10 @@ class Writer:
             extra_block_ids, arc_blocks, sfx_block_names = None, None, None
         configs = {} if self._opt_config else None
         # metadata
-        meta = {KEY_VERSION: FORMAT_VERSION, "ts": time.time()}
+        meta: dict[str, float | tuple[int, int, int]] = {
+            KEY_VERSION: FORMAT_VERSION,
+            "ts": time.time(),
+        }
         dump(meta, stream)
         # variables
         dump({KEY_SECTION: SECT_BLOCK}, stream)
@@ -274,7 +275,7 @@ class Reader:
         if text:
             meta_obj = obj
         else:
-            meta_obj = {key.decode(): value for key, value in obj.items()}
+            meta_obj = obj  # {key.decode(): value for key, value in obj.items()}
         self._h.metadata(meta_obj)
         state, count = self.ST_START, 1
         in_block_data = False
@@ -284,7 +285,8 @@ class Reader:
             if isinstance(obj, dict):
                 if in_block_data:
                     raise ValueError("Section header in middle of block data")
-                key = obj[section_key]
+                skey = section_key if text else section_key.decode()
+                key = obj[skey]
                 try:
                     state = section_map[key]
                 except KeyError:
@@ -491,13 +493,14 @@ class PrintHandler(ModelHandler):
         if not self._var:
             self.section("Variables", "-")
             self._var = True
+        print_value, print_lb, print_ub = value, lb, ub
         if value is None:
-            value = "\u2205"
+            print_value = "\u2205"
         if lb is None:
-            lb = "-\u221e"
+            print_lb = "-\u221e"
         if ub is None:
-            ub = "\u221e"
-        print(f"{data_block.name} = {value} [{lb} .. {ub}]")
+            print_ub = "\u221e"
+        print(f"{data_block.name} = {print_value} [{print_lb} .. {print_ub}]")
 
     def model_param(
         self,
@@ -639,84 +642,3 @@ class DataToModel(DataHandler):
                 _log.error(f"Block for config ({cfg_block_id}) not found")
                 continue
             self._mh.model_config(cfg_block, obj)
-
-
-################
-
-if __name__ == "__main__":
-    import argparse, sys
-    from idaes.core.io.tests.flowsheets import demo_model
-    from prommis.uky import uky_flowsheet as uky_flowsheet
-
-    p = argparse.ArgumentParser()
-    p.add_argument("--json", action="store_true")
-    p.add_argument(
-        "--model",
-        choices=["demo", "uky"],
-        default="uky",
-        help="Choose model (default=uky)",
-    )
-    p.add_argument("--print", "-p", action="store_true")
-    p.add_argument(
-        "--verbose",
-        "-v",
-        action="count",
-        help="Increase verbosity (repeatable)",
-        default=0,
-    )
-    p.add_argument("--gzip", "-z", action="store_true")
-    args = p.parse_args()
-
-    if args.verbose >= 2:
-        _log.setLevel(logging.DEBUG)
-    elif args.verbose >= 1:
-        _log.setLevel(logging.INFO)
-    else:
-        _log.setLevel(logging.WARNING)
-
-    if args.model == "demo":
-        m = demo_model()
-    elif args.model == "uky":
-        m = uky_flowsheet.build()
-    else:
-        p.error(f"Unknown model: {args.model}")
-    #    w = Writer(m, include=Writer.SUFFIXES | Writer.ARCS | Writer.CONFIGS)
-    w = Writer(m, include=0)
-
-    if args.json:
-        text = True
-        ext = "json"
-        if args.gzip:
-            mode = "wb"
-        else:
-            mode = "w"
-    else:
-        text = False
-        ext = "msgp"
-        mode = "wb"
-    if args.gzip:
-        ext += ".gz"
-
-    fname = f"model.{ext}"
-    with open(fname, mode) as f:
-        t0 = time.time()
-        w.write(f, text=text, gz=args.gzip)
-        t1 = time.time()
-    print(f"write: {(t1 - t0):.6f}s")
-    print(f"filename: {fname}")
-    #
-    if args.gzip:
-        if text:
-            f = gzip.open(fname, mode="rt")
-        else:
-            f = gzip.open(fname, mode="r")
-    else:
-        mode = "r" if text else "rb"
-        f = open(fname, mode)
-    model_handler = PrintHandler() if args.print else None
-    r = Reader(handler=DataToModel(m, model_handler=model_handler))
-    t0 = time.time()
-    n = r.read(f, text=text)
-    t1 = time.time()
-    print(f"read: {(t1 - t0):.6f}s")
-    print(f"records: {n}")
