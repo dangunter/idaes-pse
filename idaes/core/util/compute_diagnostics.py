@@ -36,11 +36,12 @@ __author__ = "Dan Gunter (LBNL)"
 
 # stdlib
 from enum import StrEnum
+import json
 from math import log
 from typing import Callable, TypeVar
 
 # third party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from pyomo.environ import (
     # Binary,
     # Integers,
@@ -97,7 +98,8 @@ from .model_diagnostics import (
     _vars_near_zero,
     _vars_violating_bounds,
     _vars_with_extreme_values,
-    #    _vars_with_none_value
+    _vars_with_none_value,
+    check_parallel_jacobian,
 )
 
 # -------------------------------------------------------------------------------
@@ -118,8 +120,12 @@ def _block_list_names(blocks) -> list[str]:
 
 
 class ComponentListData(BaseModel):
-    #: flag for whether this has any data
-    empty: bool = True
+    #: simplify check for whether this has any data
+    @computed_field
+    @property
+    def empty(self) -> bool:
+        return len(self.names) == 0
+
     #: short description of condition these components satisfy
     tag: str
     #: longer description of condition these components satisfy
@@ -199,11 +205,19 @@ class StructuralIssuesData(BaseModel):
     cautions: StructuralCautionsData
 
 
-# class NumericalIssuesData(BaseModel):
-#     """Numerical issues: warnings and cautions."""
+class NumericalWarningsData(BaseModel):
+    """Numerical warnings."""
 
-#     warnings: NumericalWarningsData
-#     cautions: NumericalCautionsData
+    constraints_with_large_residuals: ComponentListData | None = None
+    constraints_with_extreme_jacobians: ComponentListData | None = None
+    constraints_parallel: ComponentList | None = None
+    variables_parallel: ComponentList | None = None
+
+
+class NumericalIssuesData(BaseModel):
+    """Numerical warnings and.. other things"""
+
+    warnings: NumericalWarningsData
 
 
 # -------------------------------------------------------------------------------
@@ -238,6 +252,40 @@ class DiagnosticsData:
 
     def __init__(self, toolbox: DiagnosticsToolbox):
         self._toolbox = toolbox
+        self._model = self._toolbox.model
+        # get jacobian only once (since model does not change)
+        self._jac, self._nlp = get_jacobian(self._model)
+
+    def all_as_dict(self) -> dict:
+        """Return all the diagnostics as a single dictionary.
+
+        Returns:
+            dict: Diagnostics data
+        """
+        return {
+            "variables": self.variables().model_dump(),
+            "constraints": self.constraints().model_dump(),
+            "structural": self.structural_issues().model_dump(),
+            "numerical": self.numerical_issues().model_dump(),
+        }
+
+    def all_as_json(self, stream=None, **kwargs) -> str | None:
+        """Write (or return) all the diagnostics as JSON-formatted text.
+
+        Args:
+            stream: Stream to write JSON. If None, return a string instead.
+            kwargs: Keyword arguments passed through to `json.dump()` or `dumps()` method
+
+        Returns:
+            str | None: String returned when `stream` argument is None, otherwise None
+        """
+        obj = self.all_as_dict()
+        if stream is None:
+            result = json.dumps(obj, **kwargs)
+        else:
+            json.dump(obj, stream, **kwargs)
+            result = None
+        return result
 
     def variables(
         self, conditions: list[VariableCondition] | None = None
@@ -277,7 +325,6 @@ class DiagnosticsData:
         components = []
         for cond in conditions:
             item = getter(cond)
-            item.empty = not bool(item.names)
             components.append(item)
         return ComponentList(components=components)
 
@@ -344,6 +391,50 @@ class DiagnosticsData:
 
         return StructuralIssuesData(warnings=w, cautions=c)
 
+    def numerical_issues(self, parallel_components=True) -> ComponentList:
+        # warnings
+        tbx, model = self._toolbox, self._toolbox.model
+        wrn = NumericalWarningsData()
+
+        data = self._get_constraints_for_condition(ConstraintCondition.large_residuals)
+        if not data.empty:
+            wrn.constraints_with_large_residuals = data
+
+        data = self._get_constraints_for_condition(
+            ConstraintCondition.extreme_jacobians
+        )
+        if not data.empty:
+            wrn.constraints_with_extreme_jacobians = data
+
+        if parallel_components:
+            partol = tbx.config.parallel_component_tolerance
+            for direction, ctype in ("row", "constraint"), ("column", "variable"):
+                pairs = check_parallel_jacobian(
+                    model,
+                    tolerance=partol,
+                    direction=direction,
+                    jac=self._jac,
+                    nlp=self._nlp,
+                )
+                if len(pairs) == 0:
+                    continue
+                items = [
+                    ComponentListData(
+                        tag=f"parallel {ctype}",
+                        description=f"nearly parallel {ctype}",
+                        names=[c1.name, c2.name],
+                        bounds={"tol": partol},
+                    )
+                    for c1, c2 in pairs
+                ]
+                comp_list = ComponentList(components=items)
+                if ctype == "constraint":
+                    wrn.constraints_parallel = comp_list
+                else:
+                    wrn.variables_parallel = comp_list
+
+        return NumericalIssuesData(warnings=wrn)
+
     def _get_variables_for_condition(
         self, cond: VariableCondition
     ) -> ComponentListData:
@@ -378,23 +469,19 @@ class DiagnosticsData:
         elif cond == VariableCondition.fixed_to_zero:
             _set_variables(_vars_fixed_to_zero(tbx._model))
         elif cond == VariableCondition.at_or_outside_bounds:
-            tol = tbx.config.variable_bounds_violation_tolerance
+            t_zero = tbx.config.variable_bounds_violation_tolerance
             _set_variables(
-                _vars_violating_bounds(tbx._model, tolerance=tol),
+                _vars_violating_bounds(tbx._model, tolerance=t_zero),
                 nm_func=lambda v: f"{v.name} ({'fixed' if v.fixed else 'free'})",
             )
-            bounds = {"tol": tol}
+            bounds = {"tol": t_zero}
             bounds_desc = "value range"
         elif cond == VariableCondition.with_none_value:
-            _set_variables(
-                variables_with_none_value_in_activated_equalities_set(tbx._model)
-            )
+            _set_variables(_vars_with_none_value(tbx._model))
         elif cond == VariableCondition.value_near_zero:
-            variables, values = [], []
-            _set_variables(
-                _vars_near_zero(tbx._model, tbx.config.variable_zero_value_tolerance)
-            )
-            bounds = {"zero": tbx.config.variable_zero_value_tolerance}
+            t_zero = tbx.config.variable_zero_value_tolerance
+            _set_variables(_vars_near_zero(tbx._model, t_zero))
+            bounds = {"tol": t_zero}
             bounds_desc = "zero value"
         elif cond == VariableCondition.extreme_values:
             t_small, t_large, t_zero = (
@@ -424,9 +511,8 @@ class DiagnosticsData:
                 tbx.config.jacobian_large_value_caution,
             )
             # compute the extreme jacobians
-            jac, nlp = get_jacobian(tbx._model)
             xjc = _extreme_jacobian_columns(
-                jac=jac, nlp=nlp, large=t_large, small=t_small
+                jac=self._jac, nlp=self._nlp, large=t_large, small=t_small
             )
             xjc.sort(key=lambda i: abs(log(i[0])), reverse=True)
             # each value is (variable, extreme-value)
@@ -498,8 +584,9 @@ class DiagnosticsData:
                 tbx.config.jacobian_small_value_caution,
                 tbx.config.jacobian_large_value_caution,
             )
-            jac, nlp = get_jacobian(tbx._model)
-            xjr = _extreme_jacobian_rows(jac=jac, nlp=nlp, large=t_large, small=t_small)
+            xjr = _extreme_jacobian_rows(
+                jac=self._jac, nlp=self._nlp, large=t_large, small=t_small
+            )
             xjr.sort(key=lambda i: abs(log(i[0])), reverse=True)
             for c in xjr:
                 names.append(c[1].name)
