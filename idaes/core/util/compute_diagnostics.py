@@ -14,22 +14,26 @@
 """
 Compute diagnostics values and return as Pydantic data models.
 
-Usage:
+Usage::
 
     from idaes.core.util.compute_diagnostics import DiagnosticsData, DiagnosticsToolbox
-    import json
 
-    model = build_and_run_model()  # replace with real code
+    model = build_and_run_model()  # XXX: replace with real code
     toolbox = DiagnosticsToolbox(model)
-    dd = DiagnosticsData(toolbox)
-    # collect data
-    data = {
-        "variable_issues": dd.variables(),
-        "structural_issues": dd.structural_issues()
-    }
-    # pretty-print it
-    print(json.dumps(data, indent=2))
-
+    diag = DiagnosticsData(toolbox)
+    # get and print all the info as JSON
+    print(diag.all_as_json(indent=2))
+    # same, but write to a file
+    diag.all_as_json(open("diagnostics.json", "w"))
+    # also can get as a dict
+    d = diag.all_as_dict()
+    # example of using the dict
+    def count(data, key, subkey):
+        x = data[key][subkey]
+        return sum(map(lambda y: x[y] is not None, x))
+    print(f"{count(d, 'structural', 'warnings')} structural warnings")
+    print(f"{count(d, 'structural', 'cautions')} structural cautions")
+    print(f"{count(d, 'numerical', 'warnings')} numerical warnings")
 """
 
 __author__ = "Dan Gunter (LBNL)"
@@ -147,6 +151,9 @@ class VariableListData(ComponentListData):
     ranges: list[tuple[float | None, float | None]] = Field(default_factory=list)
 
 
+ConstraintListData = ComponentListData  # identical, at least for now
+
+
 class ComponentList(BaseModel):
     components: list[ComponentListData]
 
@@ -250,24 +257,25 @@ class DiagnosticsData:
 
     VC = VariableCondition  # alias
 
-    def __init__(self, toolbox: DiagnosticsToolbox):
-        self._toolbox = toolbox
-        self._model = self._toolbox.model
+    def __init__(self, toolbox: DiagnosticsToolbox = None, model=None):
+        if toolbox is None:
+            if model is None:
+                raise ValueError("Arguments `toolbox` and `model` cannot both be None")
+            self._toolbox = DiagnosticsToolbox(model)
+            self._model = model
+        else:
+            self._toolbox = toolbox
+            self._model = self._toolbox.model
         # get jacobian only once (since model does not change)
         self._jac, self._nlp = get_jacobian(self._model)
 
-    def all_as_dict(self) -> dict:
+    def all_as_dict(self) -> dict[str, dict]:
         """Return all the diagnostics as a single dictionary.
 
         Returns:
             dict: Diagnostics data
         """
-        return {
-            "variables": self.variables().model_dump(),
-            "constraints": self.constraints().model_dump(),
-            "structural": self.structural_issues().model_dump(),
-            "numerical": self.numerical_issues().model_dump(),
-        }
+        return {k: v.model_dump() for k, v in self.all_as_obj()}
 
     def all_as_json(self, stream=None, **kwargs) -> str | None:
         """Write (or return) all the diagnostics as JSON-formatted text.
@@ -286,6 +294,22 @@ class DiagnosticsData:
             json.dump(obj, stream, **kwargs)
             result = None
         return result
+
+    def all_as_obj(self) -> dict[str, BaseModel]:
+        """Same as `all_as_dict` except each top-level value is an object instead of a dict.
+
+        Note that the keys returned here should match the attributes
+        of `idaes.core.util.structfs.runner_actions.Diagnostics.Report`.
+
+        Returns:
+            dict: Diagnostics data with string keys and Pydantic model object values
+        """
+        return {
+            "variables": self.variables(),
+            "constraints": self.constraints(),
+            "structural_issues": self.structural_issues(),
+            "numerical_issues": self.numerical_issues(),
+        }
 
     def variables(
         self, conditions: list[VariableCondition] | None = None

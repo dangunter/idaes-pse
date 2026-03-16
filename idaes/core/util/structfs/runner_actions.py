@@ -37,6 +37,12 @@ except ImportError:
 # package
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.core.base.unit_model import ProcessBlockData
+from idaes.core.util.compute_diagnostics import (
+    DiagnosticsData,
+    StructuralIssuesData,
+    NumericalIssuesData,
+    ComponentList,
+)
 from .runner import Action
 from .fsrunner import FlowsheetRunner
 
@@ -523,3 +529,43 @@ class MermaidDiagram(Action):
             return {}
         mermaid_lines = self.diagram.write(None).split("\n")
         return self.Report(diagram=mermaid_lines)
+
+
+class Diagnostics(Action):
+    """Action to get model diagnostics."""
+
+    class Report(BaseModel):
+        """Report containing model diagnostics.
+
+        These attributes should match keys of dict returned by the method
+        `idaes.core.util.compute_diagnostics.DiagnosticsData.all_as_obj()`.
+        """
+
+        #: This is False if there was no model to diagnose
+        valid: bool = False
+        #: If valid is True, all these should have values,
+        #: otherwise they will all be None/null
+        variables: ComponentList | None = None
+        constraints: ComponentList | None = None
+        structural_issues: StructuralIssuesData | None = None
+        numerical_issues: NumericalIssuesData | None = None
+
+    def after_run(self):
+        """Get model diagnostics after the run."""
+        if self._runner.model is None:
+            self.diagnostics = {}
+        else:
+            dd = DiagnosticsData(model=self._runner.model)
+            self.diagnostics = dd.all_as_obj()
+
+    def report(self) -> Report:
+        """Report containing model diagnostics information.
+
+        Returns:
+            Report object
+        """
+        report = self.Report()
+        for key, val in self.diagnostics.items():
+            setattr(report, key, val)
+        report.valid = bool(self.diagnostics)
+        return report
