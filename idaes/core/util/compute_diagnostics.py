@@ -147,6 +147,8 @@ class ComponentListData(BaseModel):
 
 
 class VariableListData(ComponentListData):
+    #: units for each variable
+    units: list[str] = Field(default_factory=list)
     #: range of each variable (optional)
     ranges: list[tuple[float | None, float | None]] = Field(default_factory=list)
 
@@ -467,7 +469,7 @@ class DiagnosticsData:
         desc = str(cond)  # default description
         details, values = None, None
         bounds, bounds_desc = {}, None
-        names, ranges, values, details = [], [], [], []
+        names, ranges, values, details, units = [], [], [], [], []
 
         def _set_variables(
             it,
@@ -475,16 +477,27 @@ class DiagnosticsData:
             rg=ranges,
             vl=values,
             dt=details,
+            un=units,
             nm_func=None,
             vl_func=None,
             dt_func=None,
             rg_func=None,
+            un_func=None,
         ):
             for v in it:
                 nm.append(v.name if nm_func is None else nm_func(v))
                 vl.append(v.value if vl_func is None else vl_func(v))
                 dt.append("" if dt_func is None else dt_func(v))
                 rg.append((v.lb, v.ub) if rg_func is None else rg_func(v))
+                if un_func is None:
+                    u = str(v.get_units())
+                    # replace 'None' with an empty string
+                    # -- to match `runner_actions.ModelVariables`
+                    if u == "None":
+                        u == ""
+                else:
+                    u = un_func(v)
+                un.append(u)
 
         if cond == VariableCondition.external:
             _set_variables(variables_in_activated_constraints_set(tbx._model))
@@ -545,6 +558,7 @@ class DiagnosticsData:
                 nm_func=lambda v: str(v[1]),
                 vl_func=lambda v: v[0],
                 rg_func=lambda v: (None, None),
+                un_func=lambda v: "",
             )
             kwargs["value_format"] = ".3E"
             bounds = {"small": t_small, "large": t_large}
@@ -560,6 +574,7 @@ class DiagnosticsData:
             bounds=bounds,
             bounds_desc=bounds_desc,
             ranges=ranges,
+            units=units,
             **kwargs,
         )
 

@@ -450,11 +450,19 @@ class ModelVariables(Action):
                 v = c[index]
                 indexed = index is not None
                 if subtype == self.VAR_TYPE:
-                    # index, value, is-fixed, is-stale, lower-bound, upper-bound
-                    item = (index, pyo.value(v), v.fixed, v.stale, v.lb, v.ub)
+                    # index, value, units, is-fixed, is-stale, lower-bound, upper-bound
+                    item = (
+                        index,
+                        pyo.value(v),
+                        self._unitstr(c),
+                        v.fixed,
+                        v.stale,
+                        v.lb,
+                        v.ub,
+                    )
                 else:
-                    # index, value
-                    item = (index, pyo.value(v))
+                    # index, value, units
+                    item = (index, pyo.value(v), self._unitstr(c))
                 items.append(item)
             b.append(indexed)
             b.append(items)
@@ -462,6 +470,13 @@ class ModelVariables(Action):
             self._add_block(var_tree, c.name, b)
 
         self._vars = var_tree
+
+    @staticmethod
+    def _unitstr(c):
+        # Convert Pyomo units obj to string
+        s = str(c.get_units())
+        # Replace 'None' with an empty string
+        return "" if s == "None" else s
 
     @staticmethod
     def _is_var(c):
