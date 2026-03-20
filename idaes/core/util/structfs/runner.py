@@ -96,7 +96,8 @@ class Runner:
         step_name = self.normalize_name(name)
 
         if step_name not in self._step_names:
-            raise KeyError(f"Unknown step: {step_name}")
+            steppenlist = ", ".join(self._step_names)
+            raise KeyError(f"Unknown step: {step_name} not in: {steppenlist}")
         self._steps[step_name] = Step(step_name, func)
 
     def add_substep(self, base_name, name, func):

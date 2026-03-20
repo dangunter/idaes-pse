@@ -380,7 +380,6 @@ class DiagnosticsData:
         if len(uc) > 0:
             w.inconsistent_units = uc
         if len(uc_var) + len(uc_con) > 0:
-            uc_set = set(uc_var) + set(uc_con)
             w.underconstrained_set = VCSet.from_blocks(uc_var, uc_con)
         if len(oc_var) + len(oc_con) > 0:
             w.overconstrained_set = VCSet.from_blocks(oc_var, oc_con)
