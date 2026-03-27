@@ -436,26 +436,42 @@ class ModelVariables(Action):
             # start new block
             b = [subtype]
             # add its variables
-            items = []
-            indexed = False
-            #   add each value from an indexed var/param,
-            #   this also works ok for non-indexed ones
-            for index in c:
-                v = c[index]
-                indexed = index is not None
-                if subtype == self.VAR_TYPE:
-                    # index, value, is-fixed, is-stale, lower-bound, upper-bound
-                    item = (index, pyo.value(v), v.fixed, v.stale, v.lb, v.ub)
-                else:
-                    # index, value
-                    item = (index, pyo.value(v))
-                items.append(item)
+            items, indexed = self._get_values(c, subtype)
             b.append(indexed)
             b.append(items)
             # add block to tree
             self._add_block(var_tree, c.name, b)
 
         self._vars = var_tree
+
+    def _get_values(self, c, subtype) -> tuple[list, bool]:
+        """Add each value from an indexed var/param,
+        This also works ok for non-indexed ones.
+
+        Returns:
+            (list of items, indexed flag)
+        """
+        items = []
+        indexed = False
+        for index in c:
+            v = c[index]
+            indexed = index is not None
+            if subtype == self.VAR_TYPE:
+                # index, value, units, is-fixed, is-stale, lower-bound, upper-bound
+                item = (
+                    index,
+                    pyo.value(v),
+                    self._unitstr(c),
+                    v.fixed,
+                    v.stale,
+                    v.lb,
+                    v.ub,
+                )
+            else:
+                # index, value, units
+                item = (index, pyo.value(v), self._unitstr(c))
+            items.append(item)
+        return items, indexed
 
     @staticmethod
     def _is_var(c):
