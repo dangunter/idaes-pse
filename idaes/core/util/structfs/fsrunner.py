@@ -84,11 +84,11 @@ class BaseFlowsheetRunner(Runner):
 
     STEPS = (
         "build",
-        "set_solver",
-        "set_scaling",
-        "solve_initial",
-        "initialize",
         "set_operating_conditions",
+        "set_scaling",
+        "initialize",
+        "set_solver",
+        "solve_initial",
         "add_costing",
         "initialize_costing",
         "solve_optimization",
