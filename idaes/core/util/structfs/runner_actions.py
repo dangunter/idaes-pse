@@ -11,12 +11,21 @@
 # for full copyright and license information.
 #################################################################################
 """
-Predefined Actions for the generic Runner.
+## Runner actions
+
+This module defines a set of 'actions' that can be automatically
+executed before, during, and after a run of a flowsheet that is
+wrapped with the `Runner` decorators.
+
+The Action subclasses in this module return Pydantic models
+that can be formatted as JSON. By convention, the model is
+defined in a nested class called `Report`.
 """
 
 # stdlib
 from collections.abc import Callable
 from io import StringIO
+import logging
 import re
 import sys
 import time
@@ -37,9 +46,15 @@ except ImportError:
 # package
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.core.base.unit_model import ProcessBlockData
+from idaes.core.util.compute_diagnostics import (
+    DiagnosticsData,
+    StructuralIssuesData,
+    NumericalIssuesData,
+    ComponentList,
+)
 from .runner import Action
 from .fsrunner import FlowsheetRunner
-from .actions.diagnostics import ModelDiagnostics, ModelDiagnosticsData
+from .model_vars_schema import ModelVarsSchema
 
 
 class Timer(Action):
@@ -194,8 +209,14 @@ class UnitDofChecker(Action):
     class Report(BaseModel):
         """Report on degrees of freedom in a model."""
 
-        steps: dict[str, UnitDofType] = Field(default={})
-        model: int = Field(default=0)
+        steps: dict[str, UnitDofType] = Field(
+            default={},
+            description="Degrees of freedom for each named step",
+            examples=[{"build": 2, "set_operating_conditions": 1, "solve": 1}],
+        )
+        model: int = Field(
+            default=0, description="Degrees of freedom for the entire model"
+        )
 
     def __init__(
         self,
@@ -423,9 +444,12 @@ class ModelVariables(Action):
     def __init__(self, runner, **kwargs):
         assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
+        self._vars, self._port_vars = {}, {}
 
     def after_run(self):
         """Actions performed after the run."""
+        self._saved_paths = {}  # fast lookup used in _add_block()
+        self.log = logging.getLogger(self.log.name)
         self._extract_vars(self._runner.model)
 
     def _extract_vars(self, m):
@@ -437,6 +461,12 @@ class ModelVariables(Action):
                 subtype = self.VAR_TYPE
             elif self._is_param(c):
                 subtype = self.PARAM_TYPE
+            elif hasattr(c, "component_data_objects"):
+                # add aliases from ports
+                for port in c.component_data_objects(Port, descend_into=False):
+                    for var_name, var_obj in port.vars.items():
+                        self._port_vars[f"{c.name}.{var_name}"] = var_obj.name
+                continue  # don't do anything else
             else:
                 # find and extract aliases to vars on assoc. ports
                 if hasattr(c, "component_data_objects"):
@@ -478,6 +508,47 @@ class ModelVariables(Action):
         self._vars = var_tree
         self._ports = port_aliases
 
+    def _get_values(self, c, subtype) -> tuple[list, bool]:
+        """Add each value from an indexed var/param,
+        This also works ok for non-indexed ones.
+
+        Returns:
+            (list of items, indexed flag)
+        """
+        items = []
+        indexed = False
+        for index in c:
+            v = c[index]
+            indexed = index is not None
+            if subtype == self.VAR_TYPE:
+                # index, value, units, is-fixed, is-stale, lower-bound, upper-bound, domain
+                item = (
+                    index,
+                    pyo.value(v),
+                    self._unitstr(c),
+                    v.fixed,
+                    v.stale,
+                    v.lb,
+                    v.ub,
+                    str(v.domain),
+                )
+            else:
+                # index, value, units, domain
+                item = (index, pyo.value(v), self._unitstr(c))
+            items.append(item)
+        return items, indexed
+
+    @classmethod
+    def _unitstr(cls, c):
+        return str(pyo.units.get_units(c))
+
+    @staticmethod
+    def _unitstr(c):
+        # Convert Pyomo units obj to string
+        s = str(c.get_units())
+        # Replace 'None' with an empty string
+        return "" if s == "None" else s
+
     @staticmethod
     def _is_var(c):
         return c.is_variable_type() or isinstance(c, IndexedVar)
@@ -488,6 +559,7 @@ class ModelVariables(Action):
 
     @staticmethod
     def _add_block(tree: dict, name: str, block):
+        print(f"@@ _add_block to tree: {name}")
         # get parts of the name
         # - mostly logic to handle 'foo.bar[0.0].baz' crap
         p = name.split(".")
@@ -503,13 +575,16 @@ class ModelVariables(Action):
             else:
                 parts.append(cur)
                 i += 1
-        # insert in tree
+        # insert in tree by walking down each
+        # key in 'parts', adding empty dicts
+        # as we go
         t, prev = tree, None
         for p in parts:
             prev = t
             if p not in t:
                 t[p] = {}
             t = t[p]
+        # add the block in the final dict
         prev[p] = block
 
     def report(self) -> Report:
@@ -525,13 +600,37 @@ class MermaidDiagram(Action):
 
         diagram: list[str]  #: each item is one line
 
+    def __init__(self, runner, **kwargs):
+        super().__init__(runner, **kwargs)
+        self._images = True
+        self._model_root_split = []
+
+    def show_unit_images(self, value: bool):
+        """Whether Mermaid displays images for units.
+
+        Args:
+            value: If true, display images. Otherwise, don't.
+        """
+        self._images = bool(value)
+
+    def set_model_root(self, path: str):
+        """Set path to root of model to display (default is model itself).
+
+        Args:
+            path: Dotted path like "fs" or "fs.component"
+        """
+        self._model_root_split = path.split(".")
+
     def after_run(self):
         """Build Mermaid diagram after the run."""
         if Connectivity is None:
             self.diagram = None
         else:
-            conn = Connectivity(input_model=self._runner.model)
-            self.diagram = Mermaid(conn, component_images=True)
+            root = self._runner.model
+            for p in self._model_root_split:
+                root = getattr(root, p)
+            conn = Connectivity(input_model=root)
+            self.diagram = Mermaid(conn, component_images=self._images)
 
     def report(self) -> Report | dict:
         """Report containing the Mermaid diagram.
@@ -547,24 +646,40 @@ class MermaidDiagram(Action):
 
 
 class Diagnostics(Action):
-    """Action to run and return diagnostic information using the
-    IDAES diagnostics toolkit.
-    """
+    """Action to get model diagnostics."""
 
-    Report = ModelDiagnosticsData
+    class Report(BaseModel):
+        """Report containing model diagnostics.
 
-    def __init__(self, runner, **kwargs):
-        super().__init__(runner, **kwargs)
-        self._md = ModelDiagnostics()
+        These attributes should match keys of dict returned by the method
+        `idaes.core.util.compute_diagnostics.DiagnosticsData.all_as_obj()`.
+        """
+
+        #: This is False if there was no model to diagnose
+        valid: bool = False
+        #: If valid is True, all these should have values,
+        #: otherwise they will all be None/null
+        variables: ComponentList | None = None
+        constraints: ComponentList | None = None
+        structural_issues: StructuralIssuesData | None = None
+        numerical_issues: NumericalIssuesData | None = None
 
     def after_run(self):
-        """Get diagnostics after the run."""
-        self._md.generate(self._runner.model, self._runner.results)
-
-    def set_option(self, **kwargs):
-        """Set an option on the underlying object."""
-        for k, v in kwargs.items():
-            setattr(self._md, k, v)
+        """Get model diagnostics after the run."""
+        if self._runner.model is None:
+            self.diagnostics = {}
+        else:
+            dd = DiagnosticsData(model=self._runner.model)
+            self.diagnostics = dd.all_as_obj()
 
     def report(self) -> Report:
-        return self._md.data
+        """Report containing model diagnostics information.
+
+        Returns:
+            Report object
+        """
+        report = self.Report()
+        for key, val in self.diagnostics.items():
+            setattr(report, key, val)
+        report.valid = bool(self.diagnostics)
+        return report

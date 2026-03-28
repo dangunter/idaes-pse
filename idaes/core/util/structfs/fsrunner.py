@@ -19,9 +19,10 @@ in `FlowsheetRunner`.
 from enum import Enum
 
 # third-party
-from pyomo.environ import ConcreteModel, SolverFactory
+from pyomo.environ import ConcreteModel, SolverFactory, SolverFactory
 from pyomo.environ import units as pyunits
 from idaes.core import FlowsheetBlock
+from idaes.core.solvers import get_solver
 
 try:
     from idaes_connectivity import Connectivity
@@ -74,6 +75,14 @@ class Context(dict):
     def results(self):
         return self.get("results", None)
 
+    @property
+    def result(self):
+        return self["results"]
+
+    @result.setter
+    def result(self, value):
+        self["results"] = value
+
 
 class BaseFlowsheetRunner(Runner):
     """Specialize the base `Runner` to handle IDAES flowsheets.
@@ -84,6 +93,8 @@ class BaseFlowsheetRunner(Runner):
         STEPS: List of defined step names.
     """
 
+    _SET_SOLVER_STEP = "set_solver"
+
     STEPS = (
         "build",
         "set_operating_conditions",
@@ -92,17 +103,28 @@ class BaseFlowsheetRunner(Runner):
         "set_solver",
         "solve_initial",
         "add_costing",
-        "check_model_structure",
         "initialize_costing",
         "solve_optimization",
-        "check_model_numerics",
     )
 
-    def __init__(self, solver=None, tee=True):
+    def __init__(
+        self,
+        solver: str | object | None = None,
+        solver_options: dict | None = None,
+        tee: bool = True,
+    ):
+        """Constructor
+
+        Args:
+            solver (str | object | None, optional): Solver as a string or object. Defaults to None.
+            solver_opts (dict | None, optional): Solver options dict or None for defaults.
+            tee (bool, optional): Whether to tee the output of the solver.
+        """
         self.build_step = self.STEPS[0]
-        self._solver, self._tee = solver, tee
+        self._tee = tee
         self._ann = {}
-        super().__init__(self.STEPS)  # needs to be last
+        self._solver, self._solver_options = solver, solver_options
+        super().__init__(self.STEPS)  # calls reset()
 
     def run_steps(
         self,
@@ -119,6 +141,7 @@ class BaseFlowsheetRunner(Runner):
         if so, creates an empty Pyomo ConcreteModel to use as
         the base model for the flowsheet.
         """
+        self._set_solver()
         from_step_name = self.normalize_name(first)
         if (
             from_step_name == "-"
@@ -136,6 +159,20 @@ class BaseFlowsheetRunner(Runner):
             first = ""
 
         super().run_steps(first, last, **kwargs)
+
+    def _set_solver(self):
+        """Set the solver, if no 'set_solver' step exists."""
+        if self._SET_SOLVER_STEP not in self._steps:
+            if self._solver is None:
+                # use default solver, if none given
+                self._context.solver = get_solver()
+            elif isinstance(self._solver, str):
+                # create solver from string
+                self._context.solver = SolverFactory(self._solver)
+            else:
+                self._context.solver = self._solver
+            if self._solver_options:
+                self._context.solver.options = self._solver_options
 
     def reset(self):
         self._context = Context(solver=self._solver, tee=self._tee, model=None)
@@ -335,27 +372,6 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         self.add_action("capture_solver_output", CaptureSolverOutput)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
-        self.add_action("diagnostics", Diagnostics)
-        self.diagnostic_report_types(("structural", "numerical"))
-
-    def diagnostic_report_types(self, types: list[DiagnosticReportType]):
-        """Set diagnostic report types to generate.
-
-        Args:
-            types: One of more report types
-
-        Raises:
-            ValueError: Invalid type given
-        """
-        diag = self.get_action("diagnostics")
-        for arg in types:
-            t = DiagnosticReportType(arg)
-            if t == DiagnosticReportType.STRUCTURAL:
-                diag.set_option(structural_issues=True)
-            elif t == DiagnosticReportType.NUMERICAL:
-                diag.set_option(numerical_issues=True)
-            else:
-                raise RuntimeError(f"Unhandled report type: {t}")
 
     def build(self):
         """Run just the build step"""
