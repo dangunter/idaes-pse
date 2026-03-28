@@ -54,7 +54,6 @@ from idaes.core.util.compute_diagnostics import (
 )
 from .runner import Action
 from .fsrunner import FlowsheetRunner
-from .model_vars_schema import ModelVarsSchema
 
 
 class Timer(Action):
