@@ -358,7 +358,12 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         def _ipython_display_(self):
             self._a._ipython_display_()  # pylint: disable=protected-access
 
-    def __init__(self, **kwargs):
+    def __init__(self, solve_step=None, **kwargs):
+        """Constructor
+
+        Arguments:
+            kwargs: Passed through to superclass
+        """
         from .runner_actions import (  # pylint: disable=C0415
             CaptureSolverOutput,
             ModelVariables,
@@ -369,9 +374,12 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         super().__init__(**kwargs)
         self.dof = self.DegreesOfFreedom(self)
         self.timings = self.Timings(self)
-        self.add_action("capture_solver_output", CaptureSolverOutput)
+        self.add_action("solver_output", CaptureSolverOutput)
+        if solve_step is not None:
+            self.get_action("solver_output").set_solve_step(solve_step)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
+        self.add_action("diagnostics", Diagnostics)
 
     def build(self):
         """Run just the build step"""

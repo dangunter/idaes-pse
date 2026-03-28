@@ -397,12 +397,16 @@ class CaptureSolverOutput(Action):
 
     class Report(BaseModel):
         # String of output keyed by step
-        solver_logs: dict[str, str] = {}
+        output: dict[str, str] = {}
 
     def __init__(self, runner, **kwargs):
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
+        self._user_solve_step = None
+
+    def set_solve_step(self, name):
+        self._user_solve_step = name
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
@@ -418,6 +422,8 @@ class CaptureSolverOutput(Action):
             sys.stdout = self._save_stdout
 
     def _is_solve_step(self, name: str):
+        if self._user_solve_step:
+            return name == self._user_solve_step
         return name.startswith("solve")
 
     def report(self) -> Report:
@@ -426,7 +432,7 @@ class CaptureSolverOutput(Action):
         Returns:
             CaptureSolverOutput.Report
         """
-        return self.Report(solver_logs=self._logs)
+        return self.Report(output=self._logs)
 
 
 class ModelVariables(Action):
@@ -461,12 +467,6 @@ class ModelVariables(Action):
                 subtype = self.VAR_TYPE
             elif self._is_param(c):
                 subtype = self.PARAM_TYPE
-            elif hasattr(c, "component_data_objects"):
-                # add aliases from ports
-                for port in c.component_data_objects(Port, descend_into=False):
-                    for var_name, var_obj in port.vars.items():
-                        self._port_vars[f"{c.name}.{var_name}"] = var_obj.name
-                continue  # don't do anything else
             else:
                 # find and extract aliases to vars on assoc. ports
                 if hasattr(c, "component_data_objects"):
