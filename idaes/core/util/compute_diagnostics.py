@@ -71,39 +71,21 @@ from idaes.core.scaling.util import (
 )
 from idaes.core.util.model_statistics import (
     degrees_of_freedom,
-    # activated_blocks_set,
-    # deactivated_blocks_set,
-    # activated_equalities_set,
-    # deactivated_equalities_set,
-    # activated_inequalities_set,
-    # deactivated_inequalities_set,
-    # activated_objectives_set,
-    # deactivated_objectives_set,
     variables_in_activated_constraints_set,
     variables_not_in_activated_constraints_set,
-    variables_with_none_value_in_activated_equalities_set,
-    # number_activated_greybox_equalities,
-    # number_deactivated_greybox_equalities,
-    # activated_greybox_block_set,
-    # deactivated_greybox_block_set,
-    # greybox_block_set,
-    # unfixed_greybox_variables,
-    # greybox_variables,
-    # large_residuals_set,
     large_residuals_set,
     variables_near_bounds_set,
 )
-from .model_diagnostics import (
-    DiagnosticsToolbox,
-    _extreme_jacobian_rows,
-    _extreme_jacobian_columns,
-    _var_in_block,
-    _vars_fixed_to_zero,
-    _vars_near_zero,
-    _vars_violating_bounds,
-    _vars_with_extreme_values,
-    _vars_with_none_value,
+from idaes.core.util.diagnostics_tools import DiagnosticsToolbox
+from idaes.core.util.diagnostics_tools.utils import (
     check_parallel_jacobian,
+    extreme_jacobian_columns,
+    extreme_jacobian_rows,
+    vars_fixed_to_zero,
+    vars_near_zero,
+    vars_violating_bounds,
+    vars_with_none_value,
+    vars_with_extreme_values,
 )
 
 # -------------------------------------------------------------------------------
@@ -397,7 +379,7 @@ class DiagnosticsData:
 
         # Cautions
 
-        zero_vars = _vars_fixed_to_zero(model)
+        zero_vars = vars_fixed_to_zero(model)
         if len(zero_vars) > 0:
             c.zero_vars = _block_list_names(zero_vars)
 
@@ -503,20 +485,20 @@ class DiagnosticsData:
         elif cond == VariableCondition.unused:
             _set_variables(variables_not_in_activated_constraints_set(tbx._model))
         elif cond == VariableCondition.fixed_to_zero:
-            _set_variables(_vars_fixed_to_zero(tbx._model))
+            _set_variables(vars_fixed_to_zero(tbx._model))
         elif cond == VariableCondition.at_or_outside_bounds:
             t_zero = tbx.config.variable_bounds_violation_tolerance
             _set_variables(
-                _vars_violating_bounds(tbx._model, tolerance=t_zero),
+                vars_violating_bounds(tbx._model, tolerance=t_zero),
                 nm_func=lambda v: f"{v.name} ({'fixed' if v.fixed else 'free'})",
             )
             bounds = {"tol": t_zero}
             bounds_desc = "value range"
         elif cond == VariableCondition.with_none_value:
-            _set_variables(_vars_with_none_value(tbx._model))
+            _set_variables(vars_with_none_value(tbx._model))
         elif cond == VariableCondition.value_near_zero:
             t_zero = tbx.config.variable_zero_value_tolerance
-            _set_variables(_vars_near_zero(tbx._model, t_zero))
+            _set_variables(vars_near_zero(tbx._model, t_zero))
             bounds = {"tol": t_zero}
             bounds_desc = "zero value"
         elif cond == VariableCondition.extreme_values:
@@ -526,7 +508,7 @@ class DiagnosticsData:
                 tbx.config.variable_zero_value_tolerance,
             )
             _set_variables(
-                _vars_with_extreme_values(
+                vars_with_extreme_values(
                     model=tbx._model, large=t_large, small=t_small, zero=t_zero
                 )
             )
@@ -547,7 +529,7 @@ class DiagnosticsData:
                 tbx.config.jacobian_large_value_caution,
             )
             # compute the extreme jacobians
-            xjc = _extreme_jacobian_columns(
+            xjc = extreme_jacobian_columns(
                 jac=self._jac, nlp=self._nlp, large=t_large, small=t_small
             )
             xjc.sort(key=lambda i: abs(log(i[0])), reverse=True)
@@ -622,7 +604,7 @@ class DiagnosticsData:
                 tbx.config.jacobian_small_value_caution,
                 tbx.config.jacobian_large_value_caution,
             )
-            xjr = _extreme_jacobian_rows(
+            xjr = extreme_jacobian_rows(
                 jac=self._jac, nlp=self._nlp, large=t_large, small=t_small
             )
             xjr.sort(key=lambda i: abs(log(i[0])), reverse=True)
