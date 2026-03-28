@@ -23,7 +23,7 @@ import time
 from typing import Union, Optional
 
 # third-party
-from pyomo.network.port import ScalarPort
+from pyomo.network.port import ScalarPort, Port
 from pyomo.core.base.var import IndexedVar
 from pyomo.core.base.param import IndexedParam
 import pyomo.environ as pyo
@@ -413,10 +413,12 @@ class ModelVariables(Action):
 
         #: Tree of variables
         variables: dict = Field(default={})
+        port_variables: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
         assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
+        self._vars, self._port_vars = {}, {}
 
     def after_run(self):
         """Actions performed after the run."""
@@ -424,21 +426,28 @@ class ModelVariables(Action):
 
     def _extract_vars(self, m):
         var_tree = {}
-
+        # add block variables / params
         for c in m.component_objects():
             # get component type
             if self._is_var(c):
                 subtype = self.VAR_TYPE
             elif self._is_param(c):
                 subtype = self.PARAM_TYPE
+            elif hasattr(c, "component_data_objects"):
+                # add aliases from ports
+                for port in c.component_data_objects(Port, descend_into=False):
+                    for var_name, var_obj in port.vars.items():
+                        self._port_vars[f"{c.name}.{var_name}"] = var_obj.name
+                continue  # don't do anything else
             else:
-                continue  # ignore other components
+                continue
             # start new block
             b = [subtype]
             # add its variables
             items, indexed = self._get_values(c, subtype)
             b.append(indexed)
             b.append(items)
+
             # add block to tree
             self._add_block(var_tree, c.name, b)
 
@@ -472,6 +481,10 @@ class ModelVariables(Action):
                 item = (index, pyo.value(v), self._unitstr(c))
             items.append(item)
         return items, indexed
+
+    @classmethod
+    def _unitstr(cls, c):
+        return str(pyo.units.get_units(c))
 
     @staticmethod
     def _is_var(c):
@@ -509,7 +522,7 @@ class ModelVariables(Action):
 
     def report(self) -> Report:
         """Report containing model variable values."""
-        return self.Report(variables=self._vars)
+        return self.Report(variables=self._vars, port_variables=self._port_vars)
 
 
 class MermaidDiagram(Action):
