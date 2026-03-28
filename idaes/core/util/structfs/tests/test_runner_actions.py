@@ -19,7 +19,6 @@ import pytest
 from pytest import approx
 from .. import runner
 from ..runner_actions import Timer, UnitDofChecker, MermaidDiagram
-from ..model_vars_schema import ModelVarsSchema
 from . import flash_flowsheet
 
 
