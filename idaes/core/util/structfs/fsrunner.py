@@ -67,6 +67,10 @@ class Context(dict):
         self["results"] = self.solver.solve(self.model, tee=self["tee"])
 
     @property
+    def tee(self):
+        return self["tee"]
+
+    @property
     def results(self):
         return self.get("results", None)
 
@@ -332,6 +336,7 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
         self.add_action("diagnostics", Diagnostics)
+        self.diagnostic_report_types(("structural", "numerical"))
 
     def diagnostic_report_types(self, types: list[DiagnosticReportType]):
         """Set diagnostic report types to generate.

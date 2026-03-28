@@ -19,9 +19,9 @@ from io import StringIO
 import re
 
 import pydantic as pc
-from idaes.core.util.model_diagnostics import (
+from idaes.core.util.diagnostics_tools.diagnostics_toolbox import (
     DiagnosticsToolbox,
-    _collect_model_statistics,
+    collect_model_statistics,
 )
 from pyomo.environ import TerminationCondition, SolverStatus
 
@@ -155,7 +155,7 @@ class ModelDiagnostics:
             report = stream.getvalue()
 
             struct = StructuralData()
-            raw_stats = _collect_model_statistics(model)
+            raw_stats = collect_model_statistics(model)
             struct.statistics = [s[4:] for s in raw_stats]
             struct.warnings = len(warnings)
             struct.warning_details = [

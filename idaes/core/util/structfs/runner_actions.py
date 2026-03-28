@@ -23,7 +23,7 @@ import time
 from typing import Union, Optional
 
 # third-party
-from pyomo.network.port import ScalarPort
+from pyomo.network.port import ScalarPort, Port
 from pyomo.core.base.var import IndexedVar
 from pyomo.core.base.param import IndexedParam
 import pyomo.environ as pyo
@@ -374,6 +374,10 @@ class UnitDofChecker(Action):
 class CaptureSolverOutput(Action):
     """Capture the solver output."""
 
+    class Report(BaseModel):
+        # String of output keyed by step
+        solver_logs: dict[str, str] = {}
+
     def __init__(self, runner, **kwargs):
         super().__init__(runner, **kwargs)
         self._logs = {}
@@ -395,13 +399,13 @@ class CaptureSolverOutput(Action):
     def _is_solve_step(self, name: str):
         return name.startswith("solve")
 
-    def report(self) -> dict:
+    def report(self) -> Report:
         """Machine-readable report with solver output.
 
         Returns:
-            Report dict, {'solver_logs': "<text-log>"}
+            CaptureSolverOutput.Report
         """
-        return {"solver_logs": self._logs}
+        return self.Report(solver_logs=self._logs)
 
 
 class ModelVariables(Action):
@@ -414,6 +418,7 @@ class ModelVariables(Action):
 
         #: Tree of variables
         variables: dict = Field(default={})
+        port_aliases: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
         assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
@@ -425,7 +430,7 @@ class ModelVariables(Action):
 
     def _extract_vars(self, m):
         var_tree = {}
-
+        port_aliases = {}
         for c in m.component_objects():
             # get component type
             if self._is_var(c):
@@ -433,7 +438,13 @@ class ModelVariables(Action):
             elif self._is_param(c):
                 subtype = self.PARAM_TYPE
             else:
-                continue  # ignore other components
+                # find and extract aliases to vars on assoc. ports
+                if hasattr(c, "component_data_objects"):
+                    for port_data in c.component_data_objects(Port, descend_into=False):
+                        for port_name, port_var in port_data.vars.items():
+                            if isinstance(port_var, pyo.Var):  # only variables
+                                port_aliases[f"{c.name}.{port_name}"] = port_var.name
+                continue  # do nothing else
             # start new block
             b = [subtype]
             # add its variables
@@ -445,8 +456,16 @@ class ModelVariables(Action):
                 v = c[index]
                 indexed = index is not None
                 if subtype == self.VAR_TYPE:
-                    # index, value, is-fixed, is-stale, lower-bound, upper-bound
-                    item = (index, pyo.value(v), v.fixed, v.stale, v.lb, v.ub)
+                    # index, value, fixed, stale, lower bound, upper bound, domain
+                    item = (
+                        index,
+                        pyo.value(v),
+                        v.fixed,
+                        v.stale,
+                        v.lb,
+                        v.ub,
+                        str(v.domain),
+                    )
                 else:
                     # index, value
                     item = (index, pyo.value(v))
@@ -457,6 +476,7 @@ class ModelVariables(Action):
             self._add_block(var_tree, c.name, b)
 
         self._vars = var_tree
+        self._ports = port_aliases
 
     @staticmethod
     def _is_var(c):
@@ -494,7 +514,7 @@ class ModelVariables(Action):
 
     def report(self) -> Report:
         """Report containing model variable values."""
-        return self.Report(variables=self._vars)
+        return self.Report(variables=self._vars, port_aliases=self._ports)
 
 
 class MermaidDiagram(Action):
