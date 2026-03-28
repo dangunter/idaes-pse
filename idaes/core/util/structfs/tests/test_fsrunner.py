@@ -18,106 +18,39 @@ from ..fsrunner import FlowsheetRunner, BaseFlowsheetRunner
 from .flash_flowsheet import FS as flash_fs
 from idaes.core.util import structfs
 from idaes.core.util.doctesting import Docstring
-
-# -- setup --
-
-fsr = FlowsheetRunner()
-
-
-@fsr.step("build")
-def build_it(context):
-    print("flowsheet - build")
-    context.model = ConcreteModel()
-    print(f"@@ build_it: id(model)={id(context.model)}")
-    context.model.fs = FlowsheetBlock(dynamic=False)
-    add_units(context.model)
-
-
-@fsr.substep("build", "add_units")
-def add_units(m):
-    print("flowsheet - add units (substep)")
-    assert m.fs is not None
-
-
-@fsr.step("add_costing")
-def add_costing(context):
-    print("flowsheet - costing")
-    assert context.model is not None
-
-
-@fsr.step("solve_optimization")
-def solve_opt(context):
-    print("flowsheet - solve")
-    assert context.model is not None
-
-    class MockSolveResult:
-        def __init__(self):
-            self.solver = SimpleNamespace(
-                status=SolverStatus.ok,
-                termination_condition=TerminationCondition.optimal,
-            )
-            self.problem = SimpleNamespace(objective=SimpleNamespace(value=123))
-
-        def json_repn(self):
-            return {
-                "solver": {
-                    "status": str(self.solver.status),
-                    "termination_condition": str(self.solver.termination_condition),
-                },
-                "problem": {"objective": {"value": self.problem.objective.value}},
-            }
-            status = results.solver.stau
-
-    context["results"] = MockSolveResult()
-
-
-# -- end setup --
+from pyomo.environ import assert_optimal_termination
 
 
 @pytest.mark.unit
 def test_run_all():
-    fsr.run_steps()
-    assert fsr.results.solver.status == "ok"
+    flash_fs.run_steps()
+    assert_optimal_termination(flash_fs.results)
 
 
 @pytest.mark.unit
 def test_rerun():
 
-    fsr.run_steps()
-    first_model = fsr.model
-    print(f"@@ test: id(model)={id(fsr.model)}")
+    flash_fs.run_steps()
+    first_model = flash_fs.model
 
     print("-- rerun --")
 
     # model not changed
-    fsr.run_steps("solve_optimization")
-    assert fsr.model == first_model
+    flash_fs.run_steps(first="solve_initial", last="solve_initial")
+    assert flash_fs.model == first_model
 
 
 @pytest.mark.unit
 def test_rerun_reset():
-    fsr.run_steps()
-    first_model = fsr.model
+    flash_fs.run_steps()
+    first_model = flash_fs.model
 
     print("-- rerun --")
 
     # reset forces new model
-    fsr.reset()
-    fsr.run_steps("solve_optimization")
-    assert fsr.model != first_model
-    second_model = fsr.model
-
-
-@pytest.mark.unit
-def test_rerun_frombuild():
-    fsr.run_steps()
-    first_model = fsr.model
-
-    print("-- rerun --")
-
-    # running from build also creates new model
-    fsr.run_steps("build", "add_costing")
-    assert fsr.model != first_model
+    flash_fs.reset()
+    flash_fs.run_steps(last="solve_initial")
+    assert flash_fs.model != first_model
 
 
 @pytest.mark.unit

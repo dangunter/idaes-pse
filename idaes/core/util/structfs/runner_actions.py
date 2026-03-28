@@ -558,7 +558,6 @@ class ModelVariables(Action):
 
     @staticmethod
     def _add_block(tree: dict, name: str, block):
-        print(f"@@ _add_block to tree: {name}")
         # get parts of the name
         # - mostly logic to handle 'foo.bar[0.0].baz' crap
         p = name.split(".")
