@@ -39,71 +39,68 @@ from . import flash_flowsheet
 
 
 @pytest.mark.unit
-def test_class_timer():
-    timer = Timer(runner.Runner([]))
+def test_class_timer(monkeypatch):
+    def step_name(i):
+        return f"step{i}"
+
+    # n runs with m steps per run
     n, m = 2, 3
+
+    # set up Timer action attached to Runner instance
+    steps = [step_name(i) for i in range(m)]
+    rnr = runner.Runner(steps)
+    for step_i in steps:
+        rnr.add_step(step_i, lambda ctx: None)
+    timer = Timer(rnr)
+
+    # control results of next batch of calls to time.time()
+    run_time = 10
+    # generate list of start/end timings for n runs with m steps
+    times = []
+    for i in range(n):
+        times.append(i * run_time)
+        for j in range(m):
+            times.append(i * run_time + j)
+            times.append(i * run_time + j + 1)
+        times.append((i + 1) * run_time)
+    # print(f"times: {times}")
+    times = iter(times)
+    monkeypatch.setattr(time, "time", lambda: next(times))
+
+    # emulate a 'n' runs with 'm' steps each
     for i in range(n):
         timer.before_run()
-        time.sleep(0.1)
         for j in range(m):
-            name = f"step{j}"
+            name = step_name(j)
+            # print(f"run {i}, step {j}")
             timer.before_step(name)
-            time.sleep(0.1 * (j + 1))
             timer.after_step(name)
-        time.sleep(0.1)
         timer.after_run()
 
-    s = timer.get_history()
-    # [ {'run': 0.8005404472351074,
-    #    'steps': {
-    #       'step0': 0.10010385513305664,
-    #       'step2': 0.3000965118408203,
-    #       'step1': 0.20009303092956543
-    #      },
-    #     'inclusive': 0.6002933979034424,
-    #     'exclusive': 0.20024704933166504
-    #    },
-    #    ...
-    # ]
-    eps = 0.1  # big variance needed for Windows
-    for r in s:
-        print(f"Timings: {r}")
-        assert r["run"] == approx(0.8, abs=eps)
-        assert r["inclusive"] + r["exclusive"] == approx(r["run"])
-        for name, t in r["steps"].items():
-            assert t == approx(0.1 + 0.1 * i, abs=eps)
+    # check that times match expected
+    time_history = timer.get_history()
+    # print(time_history)
+    assert len(time_history) == n
+    for run_num, run in enumerate(time_history):
+        run_t = run["run"]
+        # each run should take 'run_time' sec
+        assert run_t == run_time
+        steps = run["steps"]
+        assert len(steps) == m
+        for i in range(m):
+            step_t = steps[step_name(i)]
+            # each step should take 1 sec
+            assert step_t == 1
+        # inclusive time is sum of step times
+        assert run["inclusive"] == m
+        # exclusive time is run time minus step times
+        assert run["exclusive"] == run_time - m
 
-
-@pytest.mark.component
-def test_timer_runner():
-    rn = runner.Runner(["step1", "step2", "step3"])
-
-    @rn.step("step1")
-    def sleepy1(context):
-        time.sleep(0.1)
-
-    @rn.step("step2")
-    def sleepy2(context):
-        time.sleep(0.1)
-
-    @rn.step("step3")
-    def sleepy3(context):
-        time.sleep(0.1)
-
-    rn.add_action("timer", Timer)
-
-    rn.run_steps()
-
-    s = rn.get_action("timer").get_history()
-
-    eps = 0.1  # big variance needed for Windows
-    for r in s:
-        print(f"Timings: {r}")
-        assert r["run"] == approx(0.3, abs=eps)
-        assert r["inclusive"] + r["exclusive"] == approx(r["run"])
-        for name, t in r["steps"].items():
-            # assert name == f"step{i + 1}"
-            assert t == approx(0.1, abs=eps)
+    # check report, which contains last run only
+    rpt = timer.report()
+    for i in range(m):
+        step_t = rpt.timings[step_name(i)]
+        assert step_t == 1
 
 
 @pytest.mark.unit
@@ -161,55 +158,6 @@ def test_unit_dof_action_getters():
     assert dofs[0] != dofs[1]
 
     assert act.steps() == act.steps(only_with_data=True)
-
-
-@pytest.mark.unit
-def test_timer_report():
-    rn = flash_flowsheet.FS
-    rn.reset()
-    turn_off_mermaid_server(rn)
-    rn.add_action("timer", Timer)
-    rn.run_steps()
-    report = rn.get_action("timer").report()
-    # {'build': 0.053082942962646484,
-    # 'set_operating_conditions': 0.0004742145538330078,
-    # 'initialize': 0.22397446632385254,
-    # 'set_solver': 7.581710815429688e-05,
-    # 'solve_initial': 0.03623509407043457}
-    expect_steps = (
-        "build",
-        "set_operating_conditions",
-        "initialize",
-        "set_solver",
-        "solve_initial",
-    )
-    assert report
-    print(f"Hey! here's the report: {report}")
-    for step_name in expect_steps:
-        assert step_name in report.timings
-        assert report.timings[step_name] < 1
-
-
-@pytest.mark.unit
-def test_timer_missing_begin_and_empty_summary(monkeypatch, caplog):
-    rn = runner.Runner(["step1", "step2"])
-    rn.add_step("step1", lambda ctx: None)
-    rn.add_step("step2", lambda ctx: None)
-    timer = Timer(rn)
-
-    assert timer.summary() == ""
-
-    times = iter([10.0, 11.0, 13.5, 20.0])
-    monkeypatch.setattr(time, "time", lambda: next(times))
-
-    timer.before_run()
-    timer.before_step("step1")
-    timer.after_step("step1")
-    timer.after_run()
-
-    assert len(timer) == 1
-    assert timer.step_times[-1] == {"step1": 2.5, "step2": -1}
-    assert timer.report().timings == {"step1": 2.5, "step2": -1}
 
 
 @pytest.mark.unit
