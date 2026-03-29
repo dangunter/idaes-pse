@@ -71,7 +71,6 @@ def init_model(ctx):
 def set_solver(ctx):
     """Set the solver."""
     ctx.solver = SolverFactory("ipopt")
-    print("@@ flash set solver")
 
 
 @FS.step("solve_initial")
