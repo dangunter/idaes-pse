@@ -470,9 +470,10 @@ class ModelVariables(Action):
                 # find and extract aliases to vars on assoc. ports
                 if hasattr(c, "component_data_objects"):
                     for port_data in c.component_data_objects(Port, descend_into=False):
+                        comp_name = port_data.name  # proper name of port's component
                         for port_name, port_var in port_data.vars.items():
                             if isinstance(port_var, pyo.Var):  # only variables
-                                port_aliases[f"{c.name}.{port_name}"] = port_var.name
+                                port_aliases[f"{comp_name}.{port_name}"] = port_var.name
                 continue  # do nothing else
             # start new block
             b = [subtype]
