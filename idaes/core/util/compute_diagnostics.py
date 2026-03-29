@@ -42,27 +42,9 @@ __author__ = "Dan Gunter (LBNL)"
 from enum import StrEnum
 import json
 from math import log
-from typing import Callable, TypeVar
 
 # third party
 from pydantic import BaseModel, Field, computed_field
-from pyomo.environ import (
-    # Binary,
-    # Integers,
-    # Block,
-    # check_optimal_termination,
-    # ComponentMap,
-    # ConcreteModel,
-    Constraint,
-    # Expression,
-    # Objective,
-    # Param,
-    # RangeSet,
-    # Set,
-    # SolverFactory,
-    value,
-    # Var,
-)
 from pyomo.util.check_units import identify_inconsistent_units
 
 # package
@@ -106,10 +88,17 @@ def _block_list_names(blocks) -> list[str]:
 
 
 class ComponentListData(BaseModel):
+    """Structured list of components that satisfy a diagnostic condition."""
+
     #: simplify check for whether this has any data
     @computed_field
     @property
     def empty(self) -> bool:
+        """Indicate whether this component list contains any entries.
+
+        Returns:
+            True if `names` is empty, otherwise False.
+        """
         return len(self.names) == 0
 
     #: short description of condition these components satisfy
@@ -129,6 +118,8 @@ class ComponentListData(BaseModel):
 
 
 class VariableListData(ComponentListData):
+    """Diagnostic data for a list of variables."""
+
     #: units for each variable
     units: list[str] = Field(default_factory=list)
     #: range of each variable (optional)
@@ -139,6 +130,8 @@ ConstraintListData = ComponentListData  # identical, at least for now
 
 
 class ComponentList(BaseModel):
+    """Collection of component lists grouped by diagnostic condition."""
+
     components: list[ComponentListData]
 
 
@@ -153,12 +146,23 @@ class VCSet(BaseModel):
 
     @classmethod
     def from_blocks(cls, var_blocks, const_blocks) -> "VCSet":
+        """Create a variable-constraint set from block collections.
+
+        Args:
+            var_blocks: Iterable of variable blocks or indexed variable blocks.
+            const_blocks: Iterable of constraint blocks or indexed constraint blocks.
+
+        Returns:
+            A `VCSet` containing the names extracted from both inputs.
+        """
         v_items = _block_list_names(var_blocks)
         c_items = _block_list_names(const_blocks)
         return VCSet(variables=v_items, constraints=c_items)
 
 
 class EvalErrorData(BaseModel):
+    """Potential model evaluation error associated with a component."""
+
     component_name: str
     message: str
 
@@ -217,6 +221,8 @@ class NumericalIssuesData(BaseModel):
 
 
 class VariableCondition(StrEnum):
+    """Conditions used to categorize variables in diagnostics output."""
+
     external = "are external variables that appear in constraints"
     unused = "do not appear in any activated constraints"
     fixed_to_zero = "are fixed to zero"
@@ -229,6 +235,8 @@ class VariableCondition(StrEnum):
 
 
 class ConstraintCondition(StrEnum):
+    """Conditions used to categorize constraints in diagnostics output."""
+
     large_residuals = "have residuals greater than specified tolerance"
     no_free_variables = "do not have any free variables"
     canceling_terms = "have additive terms which potentially cancel each other"
@@ -242,6 +250,16 @@ class DiagnosticsData:
     VC = VariableCondition  # alias
 
     def __init__(self, toolbox: DiagnosticsToolbox = None, model=None):
+        """Initialize diagnostics helpers for a model.
+
+        Args:
+            toolbox: Existing diagnostics toolbox to reuse. If not provided,
+                `model` must be supplied and a toolbox will be created.
+            model: Pyomo model to analyze when `toolbox` is not provided.
+
+        Raises:
+            ValueError: If both `toolbox` and `model` are None.
+        """
         if toolbox is None:
             if model is None:
                 raise ValueError("Arguments `toolbox` and `model` cannot both be None")
@@ -252,6 +270,41 @@ class DiagnosticsData:
             self._model = self._toolbox.model
         # get jacobian only once (since model does not change)
         self._jac, self._nlp = get_jacobian(self._model)
+
+    @staticmethod
+    def _collect_potential_eval_errors(toolbox: DiagnosticsToolbox) -> list[str]:
+        """Return potential evaluation errors reported by the toolbox.
+
+        Args:
+            toolbox: Diagnostics toolbox providing evaluation error checks.
+
+        Returns:
+            A list of warning strings describing potential evaluation errors.
+        """
+        return getattr(toolbox, "_collect_potential_eval_errors")()
+
+    @staticmethod
+    def _verify_active_variables_initialized(toolbox: DiagnosticsToolbox) -> None:
+        """Verify the toolbox model has initialized active variables.
+
+        Args:
+            toolbox: Diagnostics toolbox to validate.
+        """
+        getattr(toolbox, "_verify_active_variables_initialized")()
+
+    @staticmethod
+    def _collect_constraint_mismatches(
+        toolbox: DiagnosticsToolbox,
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Collect mismatch diagnostics for constraints from the toolbox.
+
+        Args:
+            toolbox: Diagnostics toolbox providing mismatch analysis.
+
+        Returns:
+            Tuple containing mismatch, cancellation, and no-free-variable data.
+        """
+        return getattr(toolbox, "_collect_constraint_mismatches")()
 
     def all_as_dict(self) -> dict[str, dict]:
         """Return all the diagnostics as a single dictionary.
@@ -367,7 +420,7 @@ class DiagnosticsData:
             w.overconstrained_set = VCSet.from_blocks(oc_var, oc_con)
 
         if not evaluation_errors:
-            eval_warnings = tbx._collect_potential_eval_errors()
+            eval_warnings = self._collect_potential_eval_errors(tbx)
             if len(eval_warnings) > 0:
                 w.evaluation_errors = []
                 for ew_raw in eval_warnings:
@@ -399,6 +452,15 @@ class DiagnosticsData:
         return StructuralIssuesData(warnings=w, cautions=c)
 
     def numerical_issues(self, parallel_components=True) -> ComponentList:
+        """Compute numerical warnings for the current model.
+
+        Args:
+            parallel_components: If True, include warnings for nearly parallel
+                constraints and variables based on the Jacobian.
+
+        Returns:
+            Numerical warnings grouped in a `NumericalIssuesData` object.
+        """
         # warnings
         tbx, model = self._toolbox, self._toolbox.model
         wrn = NumericalWarningsData()
@@ -448,17 +510,11 @@ class DiagnosticsData:
         tbx = self._toolbox  # alias
         kwargs = {}  # additional keywords for return value constructor
         desc = str(cond)  # default description
-        details, values = None, None
         bounds, bounds_desc = {}, None
         names, ranges, values, details, units = [], [], [], [], []
 
         def _set_variables(
             it,
-            nm=names,
-            rg=ranges,
-            vl=values,
-            dt=details,
-            un=units,
             nm_func=None,
             vl_func=None,
             dt_func=None,
@@ -466,39 +522,39 @@ class DiagnosticsData:
             un_func=None,
         ):
             for v in it:
-                nm.append(v.name if nm_func is None else nm_func(v))
-                vl.append(v.value if vl_func is None else vl_func(v))
-                dt.append("" if dt_func is None else dt_func(v))
-                rg.append((v.lb, v.ub) if rg_func is None else rg_func(v))
+                names.append(v.name if nm_func is None else nm_func(v))
+                values.append(v.value if vl_func is None else vl_func(v))
+                details.append("" if dt_func is None else dt_func(v))
+                ranges.append((v.lb, v.ub) if rg_func is None else rg_func(v))
                 if un_func is None:
                     u = str(v.get_units())
                     # replace 'None' with an empty string
                     # -- to match `runner_actions.ModelVariables`
                     if u == "None":
-                        u == ""
+                        u = ""
                 else:
                     u = un_func(v)
-                un.append(u)
+                units.append(u)
 
         if cond == VariableCondition.external:
-            _set_variables(variables_in_activated_constraints_set(tbx._model))
+            _set_variables(variables_in_activated_constraints_set(self._model))
         elif cond == VariableCondition.unused:
-            _set_variables(variables_not_in_activated_constraints_set(tbx._model))
+            _set_variables(variables_not_in_activated_constraints_set(self._model))
         elif cond == VariableCondition.fixed_to_zero:
-            _set_variables(vars_fixed_to_zero(tbx._model))
+            _set_variables(vars_fixed_to_zero(self._model))
         elif cond == VariableCondition.at_or_outside_bounds:
             t_zero = tbx.config.variable_bounds_violation_tolerance
             _set_variables(
-                vars_violating_bounds(tbx._model, tolerance=t_zero),
+                vars_violating_bounds(self._model, tolerance=t_zero),
                 nm_func=lambda v: f"{v.name} ({'fixed' if v.fixed else 'free'})",
             )
             bounds = {"tol": t_zero}
             bounds_desc = "value range"
         elif cond == VariableCondition.with_none_value:
-            _set_variables(vars_with_none_value(tbx._model))
+            _set_variables(vars_with_none_value(self._model))
         elif cond == VariableCondition.value_near_zero:
             t_zero = tbx.config.variable_zero_value_tolerance
-            _set_variables(vars_near_zero(tbx._model, t_zero))
+            _set_variables(vars_near_zero(self._model, t_zero))
             bounds = {"tol": t_zero}
             bounds_desc = "zero value"
         elif cond == VariableCondition.extreme_values:
@@ -509,21 +565,21 @@ class DiagnosticsData:
             )
             _set_variables(
                 vars_with_extreme_values(
-                    model=tbx._model, large=t_large, small=t_small, zero=t_zero
+                    model=self._model, large=t_large, small=t_small, zero=t_zero
                 )
             )
             bounds = {"small": t_small, "large": t_large, "zero": t_zero}
-            bonds_desc = "extreme values"
+            bounds_desc = "extreme values"
         elif cond == VariableCondition.near_bounds:
             t_abs = tbx.config.variable_bounds_absolute_tolerance
             t_rel = tbx.config.variable_bounds_relative_tolerance
             _set_variables(
-                variables_near_bounds_set(tbx._model, abs_tol=t_abs, rel_tol=t_rel)
+                variables_near_bounds_set(self._model, abs_tol=t_abs, rel_tol=t_rel)
             )
             bounds = {"abs": t_abs, "rel": t_rel}
             bounds_desc = "near bounds"
         elif cond == VariableCondition.extreme_jacobians:
-            tbx._verify_active_variables_initialized()
+            self._verify_active_variables_initialized(tbx)
             t_small, t_large = (
                 tbx.config.jacobian_small_value_caution,
                 tbx.config.jacobian_large_value_caution,
@@ -571,7 +627,7 @@ class DiagnosticsData:
 
         if cond == ConstraintCondition.large_residuals:
             residuals = large_residuals_set(
-                tbx._model,
+                self._model,
                 tol=tbx.config.constraint_residual_tolerance,
                 return_residual_values=True,
             )
@@ -582,24 +638,24 @@ class DiagnosticsData:
             bounds = {"tol": tbx.config.constraint_residual_tolerance}
             bounds_desc = "residual tolerance"
         elif cond == ConstraintCondition.no_free_variables:
-            tbx._verify_active_variables_initialized()
-            _, _, names = tbx._collect_constraint_mismatches()
+            self._verify_active_variables_initialized(tbx)
+            _, _, names = self._collect_constraint_mismatches(tbx)
         elif cond == ConstraintCondition.canceling_terms:
-            tbx._verify_active_variables_initialized()
-            _, cancellation, _ = tbx._collect_constraint_mismatches()
+            self._verify_active_variables_initialized(tbx)
+            _, cancellation, _ = self._collect_constraint_mismatches(tbx)
             for item in cancellation:
                 name, _, detail = item.partition(": ")
                 names.append(name)
                 details.append(detail)
         elif cond == ConstraintCondition.mismatched_terms:
-            tbx._verify_active_variables_initialized()
-            mismatch, _, _ = tbx._collect_constraint_mismatches()
+            self._verify_active_variables_initialized(tbx)
+            mismatch, _, _ = self._collect_constraint_mismatches(tbx)
             for item in mismatch:
                 name, _, detail = item.partition(": ")
                 names.append(name)
                 details.append(detail)
         elif cond == ConstraintCondition.extreme_jacobians:
-            tbx._verify_active_variables_initialized()
+            self._verify_active_variables_initialized(tbx)
             t_small, t_large = (
                 tbx.config.jacobian_small_value_caution,
                 tbx.config.jacobian_large_value_caution,

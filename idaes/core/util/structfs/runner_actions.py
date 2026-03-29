@@ -84,9 +84,19 @@ class Timer(Action):
         self._step_order = runner.list_steps()
 
     def before_step(self, step_name):
+        """Record the start time for a step.
+
+        Args:
+            step_name: Name of the step about to run.
+        """
         self._step_begin[step_name] = time.time()
 
     def after_step(self, step_name):
+        """Record the elapsed time for a completed step.
+
+        Args:
+            step_name: Name of the step that just finished.
+        """
         t1 = time.time()
         t0 = self._step_begin.get(step_name, None)
         if t0 is None:
@@ -96,11 +106,13 @@ class Timer(Action):
             self._step_begin[step_name] = None
 
     def before_run(self):
+        """Initialize timer state before a run starts."""
         self._run_begin = time.time()
         self._cur_step_times = {}
         self._step_begin = {}
 
     def after_run(self):
+        """Finalize run timing data after a run completes."""
         t1 = time.time()
         if self._run_begin is None:
             self.log.warning("Timer: run end without begin")
@@ -113,6 +125,11 @@ class Timer(Action):
             self.step_times.append(filled_times)
 
     def __len__(self):
+        """Return the number of recorded runs.
+
+        Returns:
+            The number of completed runs captured by this timer.
+        """
         return len(self.run_times)
 
     def get_history(self) -> list[dict]:
@@ -255,6 +272,11 @@ class UnitDofChecker(Action):
         self._fs = flowsheet
 
     def after_step(self, step_name: str):
+        """Compute unit and model degrees of freedom after a step.
+
+        Args:
+            step_name: Name of the step that just completed.
+        """
         step_name = self._runner.normalize_name(step_name)
         if step_name not in self._steps:
             self.log.debug(f"Do not check DoF for step: {step_name}")
@@ -395,16 +417,29 @@ class CaptureSolverOutput(Action):
     """Capture the solver output."""
 
     class Report(BaseModel):
-        # String of output keyed by step
+        """Report object for captured solver output action"""
+
+        #: String of output keyed by step
         output: dict[str, str] = {}
 
     def __init__(self, runner, **kwargs):
+        """Initialize solver output capture state.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
         self._user_solve_step = None
 
     def set_solve_step(self, name):
+        """Set the step name whose output should be captured.
+
+        Args:
+            name: Step name to treat as the solver step.
+        """
         self._user_solve_step = name
 
     def before_step(self, step_name: str):
@@ -447,6 +482,12 @@ class ModelVariables(Action):
         port_aliases: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
+        """Initialize model variable extraction state.
+
+        Args:
+            runner: Flowsheet runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
         assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
         self._vars, self._port_vars = {}, {}
@@ -600,6 +641,12 @@ class MermaidDiagram(Action):
         diagram: list[str]  #: each item is one line
 
     def __init__(self, runner, **kwargs):
+        """Initialize Mermaid diagram generation settings.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
         super().__init__(runner, **kwargs)
         self._images = True
         self._model_root_split = []

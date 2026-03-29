@@ -19,7 +19,7 @@ in `FlowsheetRunner`.
 from enum import Enum
 
 # third-party
-from pyomo.environ import ConcreteModel, SolverFactory, SolverFactory
+from pyomo.environ import ConcreteModel, SolverFactory
 from pyomo.environ import units as pyunits
 from idaes.core import FlowsheetBlock
 from idaes.core.solvers import get_solver
@@ -69,18 +69,38 @@ class Context(dict):
 
     @property
     def tee(self):
+        """Return whether solver output should be streamed.
+
+        Returns:
+            True if solver output should be echoed, otherwise False.
+        """
         return self["tee"]
 
     @property
     def results(self):
+        """Return the stored solver results, if any.
+
+        Returns:
+            The stored solver results object, or None if no solve has run.
+        """
         return self.get("results", None)
 
     @property
     def result(self):
+        """Return the stored solver results.
+
+        Returns:
+            The stored solver results object.
+        """
         return self["results"]
 
     @result.setter
     def result(self, value):
+        """Store solver results in the context.
+
+        Args:
+            value: Solver results object to store.
+        """
         self["results"] = value
 
 
@@ -175,6 +195,7 @@ class BaseFlowsheetRunner(Runner):
                 self._context.solver.options = self._solver_options
 
     def reset(self):
+        """Reset the runner context to its initial state."""
         self._context = Context(solver=self._solver, tee=self._tee, model=None)
 
     def _create_model(self):
@@ -291,6 +312,8 @@ class BaseFlowsheetRunner(Runner):
 
 
 class DiagnosticReportType(Enum):
+    """Different types of diagnostic reports"""
+
     STRUCTURAL = "structural"
     NUMERICAL = "numerical"
 
@@ -302,6 +325,11 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         """Wrapper for the UnitDofChecker action"""
 
         def __init__(self, runner):
+            """Create the degrees-of-freedom helper.
+
+            Args:
+                runner: Flowsheet runner that owns the underlying action.
+            """
             from .runner_actions import UnitDofChecker  # pylint: disable=C0415
 
             # check DoF after build, initial solve, and optimization solve
@@ -333,6 +361,11 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         """Wrapper for the Timer action"""
 
         def __init__(self, runner):
+            """Create the timings helper.
+
+            Args:
+                runner: Flowsheet runner that owns the underlying action.
+            """
             from .runner_actions import Timer  # pylint: disable=C0415
 
             self._a: Timer = runner.add_action("timings", Timer)
@@ -359,10 +392,14 @@ class FlowsheetRunner(BaseFlowsheetRunner):
             self._a._ipython_display_()  # pylint: disable=protected-access
 
     def __init__(self, solve_step=None, **kwargs):
-        """Constructor
+        """Initialize a flowsheet runner with default inspection actions.
 
-        Arguments:
-            kwargs: Passed through to superclass
+        Args:
+            solve_step: Optional step name whose output should be captured as
+                solver output. If not provided, steps whose names start with
+                `"solve"` are captured.
+            **kwargs: Additional keyword arguments passed to
+                `BaseFlowsheetRunner`.
         """
         from .runner_actions import (  # pylint: disable=C0415
             CaptureSolverOutput,
