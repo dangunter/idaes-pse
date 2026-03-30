@@ -39,7 +39,7 @@ Usage::
 __author__ = "Dan Gunter (LBNL)"
 
 # stdlib
-from enum import StrEnum
+from enum import Enum
 import json
 from math import log
 
@@ -220,7 +220,7 @@ class NumericalIssuesData(BaseModel):
 # -------------------------------------------------------------------------------
 
 
-class VariableCondition(StrEnum):
+class VariableCondition(str, Enum):
     """Conditions used to categorize variables in diagnostics output."""
 
     external = "are external variables that appear in constraints"
@@ -234,7 +234,7 @@ class VariableCondition(StrEnum):
     extreme_jacobians = "corresponding to Jacobian columns with extreme norms"
 
 
-class ConstraintCondition(StrEnum):
+class ConstraintCondition(str, Enum):
     """Conditions used to categorize constraints in diagnostics output."""
 
     large_residuals = "have residuals greater than specified tolerance"
