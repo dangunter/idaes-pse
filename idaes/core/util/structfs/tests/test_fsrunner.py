@@ -12,9 +12,10 @@
 #################################################################################
 import pytest
 from types import SimpleNamespace
-from pyomo.environ import ConcreteModel, SolverStatus, TerminationCondition
+from pyomo.environ import ConcreteModel, SolverStatus, TerminationCondition, Var
 from idaes.core import FlowsheetBlock
-from ..fsrunner import FlowsheetRunner, BaseFlowsheetRunner
+from .. import fsrunner
+from ..fsrunner import Context, FlowsheetRunner, BaseFlowsheetRunner
 from .flash_flowsheet import FS as flash_fs
 from idaes.core.util import structfs
 from idaes.core.util.doctesting import Docstring
@@ -137,3 +138,116 @@ def test_ann_docs():
     ex = fr.annotated_vars["example"]
     assert ex["fullname"] == "ScalarVar"
     assert ex["title"] == "Example variable"
+
+
+@pytest.mark.unit
+def test_context_solve_and_properties(monkeypatch):
+    seen = {}
+
+    class FakeSolver:
+        def solve(self, model, tee):
+            seen["call"] = (model, tee)
+            return "solved"
+
+    monkeypatch.setattr(fsrunner, "SolverFactory", lambda name: FakeSolver())
+
+    ctx = Context(model="model", solver=None, tee=False)
+    ctx.solve()
+    assert seen["call"] == ("model", False)
+    assert ctx.results == "solved"
+    assert ctx.result == "solved"
+
+    ctx.result = "updated"
+    ctx.model = "new-model"
+    ctx.solver = "solver"
+    assert ctx.result == "updated"
+    assert ctx.model == "new-model"
+    assert ctx.solver == "solver"
+    assert ctx.tee is False
+
+
+@pytest.mark.unit
+def test_base_flowsheet_runner_set_solver_branches(monkeypatch):
+    default_solver = object()
+    monkeypatch.setattr(fsrunner, "get_solver", lambda: default_solver)
+
+    class SolverWithOptions:
+        def __init__(self):
+            self.options = None
+
+    monkeypatch.setattr(fsrunner, "SolverFactory", lambda name: f"factory:{name}")
+
+    r1 = BaseFlowsheetRunner()
+    r1._set_solver()
+    assert r1._context.solver is default_solver
+
+    r2 = BaseFlowsheetRunner(solver="ipopt_v2")
+    r2._set_solver()
+    assert r2._context.solver == "factory:ipopt_v2"
+
+    supplied = SolverWithOptions()
+    r3 = BaseFlowsheetRunner(solver=supplied, solver_options={"tol": 1e-6})
+    r3._set_solver()
+    assert r3._context.solver is supplied
+    assert r3._context.solver.options == {"tol": 1e-6}
+
+
+@pytest.mark.unit
+def test_base_flowsheet_runner_before_after_and_annotate_error():
+    class TinyRunner(BaseFlowsheetRunner):
+        STEPS = ("build", "middle", "end")
+
+        def _create_model(self):
+            return SimpleNamespace(created=True)
+
+    rn = TinyRunner()
+
+    @rn.step("build")
+    def build(ctx):
+        ctx["calls"] = ["build"]
+
+    @rn.step("middle")
+    def middle(ctx):
+        if "calls" not in ctx:
+            ctx["calls"] = []
+        ctx["calls"].append("middle")
+
+    @rn.step("end")
+    def end(ctx):
+        if "calls" not in ctx:
+            ctx["calls"] = []
+        ctx["calls"].append("end")
+
+    rn.run_steps(before="end")
+    assert rn["calls"] == ["build", "middle"]
+
+    rn.reset()
+    rn.run_steps(after="build")
+    assert rn["calls"] == ["middle", "end"]
+
+    v = Var()
+    v.construct()
+    with pytest.raises(ValueError, match="One of 'is_input', 'is_output' must be True"):
+        rn.annotate_var(v, is_input=False, is_output=False)
+
+    rn.annotate_var(v, key="v")
+    ann = rn.annotated_vars
+    print(f"@@ before: _ann = {rn._ann}")
+    ann["v"]["title"] = "changed"
+    print(f"@@ after: _ann = {rn._ann}")
+    assert rn.annotated_vars["v"]["title"] != "changed"
+
+
+@pytest.mark.unit
+def test_flowsheetrunner_set_solve_step(monkeypatch):
+    rn = FlowsheetRunner(solve_step="special_solve")
+    assert rn.get_action("solver_output")._user_solve_step == "special_solve"
+
+    monkeypatch.setattr(rn, "run_step", lambda name: setattr(rn, "_build_called", name))
+    monkeypatch.setattr(
+        rn, "run_steps", lambda **kwargs: setattr(rn, "_solve_called", kwargs)
+    )
+    rn.build()
+    rn.solve_initial()
+    assert rn._build_called == "build"
+    assert rn._solve_called == {"last": "solve_initial"}

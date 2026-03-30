@@ -9,7 +9,12 @@
 # University, West Virginia University Research Corporation, et al.
 # All rights reserved.  Please see the files COPYRIGHT.md and LICENSE.md
 # for full copyright and license information.
-#################################################################################import pprint
+#################################################################################
+
+# stdlib
+from io import StringIO
+import logging
+import pprint
 import sys
 import time
 from types import SimpleNamespace
@@ -197,6 +202,38 @@ def test_mermaid_report():
 
 
 @pytest.mark.unit
+def test_timer_warning_summary_and_display(monkeypatch, caplog, capsys):
+    test_log = logging.getLogger("test_timer_warning_summary_and_display(")
+    rn = runner.Runner(["step1", "step2"])
+    rn.add_step("step1", lambda ctx: None)
+    rn.add_step("step2", lambda ctx: None)
+    action = Timer(rn, log=test_log)
+
+    assert action.summary() == ""
+
+    action._ipython_display_()
+    assert capsys.readouterr().out == "\n"
+
+    with caplog.at_level("WARNING"):
+        action.after_step("step1")
+        action.after_run()
+    assert "step 'step1' end without begin" in caplog.text
+    assert "run end without begin" in caplog.text
+
+    times = iter([1.0, 2.0, 3.0, 5.0])
+    monkeypatch.setattr(time, "time", lambda: next(times))
+    action.before_run()
+    action.before_step("step1")
+    action.after_step("step1")
+    action.after_run()
+
+    stream = StringIO()
+    summary = action.summary(stream=stream)
+    assert summary is None
+    assert "Total time" in stream.getvalue()
+
+
+@pytest.mark.unit
 def test_unit_dof_checker_empty_steps_error():
     with pytest.raises(ValueError, match="At least one step name must be provided"):
         UnitDofChecker(runner.Runner(["build"]), "fs", [])
@@ -331,6 +368,33 @@ def test_unit_dof_checker_get_dof_fixes_and_frees_inlets(monkeypatch):
 
 
 @pytest.mark.unit
+def test_unit_dof_checker_string_steps_root_model_and_display(tmp_path):
+    class FakeRunner:
+        def __init__(self):
+            self.model = "model"
+
+        def normalize_name(self, name):
+            return runner.Runner.normalize_name(name)
+
+        def list_steps(self):
+            return ["build"]
+
+    # for some reason, capfd/capsys doesn't work for this
+    tempfile = tmp_path / "dof.txt"
+    with open(tempfile, "w") as output_stream:
+        action = UnitDofChecker(FakeRunner(), "", "build")
+        assert action.steps() == ["build"]
+        assert action._get_flowsheet() == "model"
+        action._model_dof = 0
+        action._steps_dof = {"build": {"model": 0}}
+        action.summary(stream=output_stream)
+        assert action._ipython_display_() is None
+    with open(tempfile, "r") as input_stream:
+        captured_out = input_stream.read()
+        assert "Degrees of freedom" in captured_out
+
+
+@pytest.mark.unit
 def test_capture_solver_output_default_and_custom_step():
     action = CaptureSolverOutput(runner.Runner(["solve_model", "custom_solve"]))
     stdout = sys.stdout
@@ -423,6 +487,15 @@ def test_mermaid_diagram_with_mocked_connectivity(monkeypatch):
     assert calls["input_model"] is action._runner.model.fs
     assert calls["component_images"] is False
     assert action.report().diagram == ["graph TD", "A-->B"]
+
+
+@pytest.mark.unit
+def test_mermaid_diagram_without_connectivity(monkeypatch):
+    action = MermaidDiagram(runner.Runner([]))
+    monkeypatch.setattr("idaes.core.util.structfs.runner_actions.Connectivity", None)
+    action.after_run()
+    assert action.diagram is None
+    assert action.report() == {}
 
 
 @pytest.mark.unit

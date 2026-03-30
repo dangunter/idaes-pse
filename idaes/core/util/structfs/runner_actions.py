@@ -51,6 +51,7 @@ from idaes.core.util.compute_diagnostics import (
     StructuralIssuesData,
     NumericalIssuesData,
     ComponentList,
+    DiagnosticsError,
 )
 from .runner import Action
 from .fsrunner import FlowsheetRunner
@@ -100,7 +101,7 @@ class Timer(Action):
         t1 = time.time()
         t0 = self._step_begin.get(step_name, None)
         if t0 is None:
-            self.log.warning(f"Timer: step {step_name} end without begin")
+            self.log.warning(f"Timer: step '{step_name}' end without begin")
         else:
             self._cur_step_times[step_name] = t1 - t0
             self._step_begin[step_name] = None
@@ -164,8 +165,9 @@ class Timer(Action):
         Returns:
             str: If output stream was None, the text summary; otherwise None
         """
+        stringio = False
         if stream is None:
-            stream = StringIO()
+            stream, stringio = StringIO(), True
 
         if len(self.run_times) == 0:
             return ""  # nothing to summarize
@@ -186,10 +188,7 @@ class Timer(Action):
 
         stream.write(f"\nTotal time: {d['run']:.3f} s\n")
 
-        if isinstance(stream, StringIO):
-            return stream.getvalue()
-
-        return None
+        return stream.getvalue() if stringio else None
 
     def _ipython_display_(self):
         print(self.summary())
@@ -311,7 +310,7 @@ class UnitDofChecker(Action):
     def _is_unit_model(block):
         return isinstance(block, ProcessBlockData)
 
-    def summary(self, stream=sys.stdout, step=None):
+    def summary(self, stream=None, step=None):
         """Readable summary of the degrees of freedom.
 
         Args:
@@ -347,9 +346,11 @@ class UnitDofChecker(Action):
 
         if isinstance(stream, StringIO):
             return stream.getvalue()
+        else:
+            stream.flush()
 
     def _ipython_display_(self):
-        self.summary()
+        self.summary(stream=sys.stdout)
 
     def get_dof(self) -> dict[str, UnitDofType]:
         """Get degrees of freedom
@@ -525,12 +526,22 @@ class ModelVariables(Action):
             #   this also works ok for non-indexed ones
             for index in c:
                 v = c[index]
+
+                # safely get value
+                # if the variable is uninitialized, set None/null
+                try:
+                    v_value = pyo.value(v)
+                except ValueError as err:
+                    # raised for uninitialized variables
+                    v_value = None
+                    self.log.warning(f"Cannot get value for '{c.name}[{index}]': {err}")
+
                 indexed = index is not None
                 if subtype == self.VAR_TYPE:
                     # index, value, fixed, stale, lower bound, upper bound, domain
                     item = (
                         index,
-                        pyo.value(v),
+                        v_value,
                         v.fixed,
                         v.stale,
                         v.lb,
@@ -539,7 +550,7 @@ class ModelVariables(Action):
                     )
                 else:
                     # index, value
-                    item = (index, pyo.value(v))
+                    item = (index, v_value)
                 items.append(item)
             b.append(indexed)
             b.append(items)
@@ -715,8 +726,11 @@ class Diagnostics(Action):
         if self._runner.model is None:
             self.diagnostics = {}
         else:
-            dd = DiagnosticsData(model=self._runner.model)
-            self.diagnostics = dd.all_as_obj()
+            try:
+                dd = DiagnosticsData(model=self._runner.model)
+                self.diagnostics = dd.all_as_obj()
+            except DiagnosticsError:
+                self.diagnostics = {}
 
     def report(self) -> Report:
         """Report containing model diagnostics information.

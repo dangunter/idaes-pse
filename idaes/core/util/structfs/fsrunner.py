@@ -16,6 +16,7 @@ in `FlowsheetRunner`.
 """
 
 # stdlib
+from copy import deepcopy
 from enum import Enum
 
 # third-party
@@ -308,7 +309,7 @@ class BaseFlowsheetRunner(Runner):
     @property
     def annotated_vars(self) -> dict[str,]:
         """Get (a copy of) the annotated variables."""
-        return self._ann.copy()
+        return deepcopy(self._ann)
 
 
 class DiagnosticReportType(Enum):

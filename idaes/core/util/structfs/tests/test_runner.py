@@ -11,6 +11,7 @@
 # for full copyright and license information.
 #################################################################################
 import pytest
+from pydantic import BaseModel
 from ..runner import Runner, Action
 from .. import runner_actions
 from idaes.core.util.doctesting import Docstring
@@ -148,9 +149,84 @@ class RunActionExample(Action):
         return {"example": True}
 
 
+class ReportModel(BaseModel):
+    ok: bool = True
+
+
+class ReportModelAction(Action):
+    def report(self) -> ReportModel:
+        return ReportModel()
+
+
+class DelegatingAction(Action):
+    def report(self):
+        return Action.report(self)
+
+
 @pytest.mark.unit
 def test_runaction():
     simple.reset()
     simple.add_action("foo", RunActionExample)
     simple.run_steps()
     assert simple.get_action("foo").report() == {"example": True}
+
+
+@pytest.mark.unit
+def test_run_steps_conflicting_args_and_endpoint_skip():
+    calls = []
+    rn = Runner(("a", "b", "c"))
+
+    @rn.step("a")
+    def step_a(ctx):
+        calls.append("a")
+
+    @rn.step("b")
+    def step_b(ctx):
+        calls.append("b")
+
+    @rn.step("c")
+    def step_c(ctx):
+        calls.append("c")
+
+    with pytest.raises(ValueError, match="Cannot specify both 'after' and 'first'"):
+        rn.run_steps(first="a", after="a")
+
+    with pytest.raises(ValueError, match="Cannot specify both 'before' and 'last'"):
+        rn.run_steps(last="c", before="c")
+
+    rn.run_steps(after="a", before="c")
+    assert calls == ["b"]
+    assert rn._last_run_steps == ["b"]
+
+
+@pytest.mark.unit
+def test_find_step_no_defined_steps_and_normalize_name():
+    rn = Runner(("a", "b"))
+    assert rn._find_step() == -1
+    assert rn._find_step(reverse=True) == -1
+    assert rn.normalize_name(None) == Runner.STEP_ANY
+
+
+@pytest.mark.unit
+def test_runner_report_with_model_and_dict_actions():
+    rn = Runner(("run",))
+
+    @rn.step("run")
+    def do_run(ctx):
+        ctx["ran"] = True
+
+    rn.add_action("dict_action", RunActionExample)
+    rn.add_action("model_action", ReportModelAction)
+
+    rn.run_steps()
+    report = rn.report()
+
+    assert report["actions"]["dict_action"] == {"example": True}
+    assert report["actions"]["model_action"] == {"ok": True}
+    assert report["last_run"] == ["run"]
+
+
+@pytest.mark.unit
+def test_action_default_report_returns_none():
+    action = DelegatingAction(simple)
+    assert action.report() is None

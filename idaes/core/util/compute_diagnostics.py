@@ -244,6 +244,10 @@ class ConstraintCondition(StrEnum):
     extreme_jacobians = "corresponding to Jacobian rows with extreme L2 norms"
 
 
+class DiagnosticsError(Exception):
+    pass
+
+
 class DiagnosticsData:
     """Interface to get diagnostics data"""
 
@@ -289,8 +293,14 @@ class DiagnosticsData:
 
         Args:
             toolbox: Diagnostics toolbox to validate.
+
+        Raises:
+            DiagnosticsError, if active variables are not initialized
         """
-        getattr(toolbox, "_verify_active_variables_initialized")()
+        try:
+            getattr(toolbox, "_verify_active_variables_initialized")()
+        except RuntimeError as err:
+            raise DiagnosticsError(f"while computing diagnostics: {err}")
 
     @staticmethod
     def _collect_constraint_mismatches(
@@ -311,8 +321,11 @@ class DiagnosticsData:
 
         Returns:
             dict: Diagnostics data
+
+        Raises:
+            DiagnosticsError, on error
         """
-        return {k: v.model_dump() for k, v in self.all_as_obj()}
+        return {k: v.model_dump() for k, v in self.all_as_obj().items()}
 
     def all_as_json(self, stream=None, **kwargs) -> str | None:
         """Write (or return) all the diagnostics as JSON-formatted text.
@@ -323,6 +336,9 @@ class DiagnosticsData:
 
         Returns:
             str | None: String returned when `stream` argument is None, otherwise None
+
+        Raises:
+            DiagnosticsError, on error
         """
         obj = self.all_as_dict()
         if stream is None:
