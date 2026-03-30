@@ -129,7 +129,10 @@ class StructuralWarningsReport(Report):
             lines.append(
                 f"WARNING: {_plural(len(data.inconsistent_units), 'Component')} with inconsistent units"
             )
-        if data.underconstrained_set is not None or data.overconstrained_set is not None:
+        if (
+            data.underconstrained_set is not None
+            or data.overconstrained_set is not None
+        ):
             indent = " " * 4
             ucv, ucc = len(data.underconstrained_set.variables), len(
                 data.underconstrained_set.constraints
@@ -166,7 +169,9 @@ class StructuralCautionsReport(Report):
                 f"Caution: {_plural(len(data.zero_vars), 'variable')} fixed to 0"
             )
         if data.unused_vars_free is not None or data.unused_vars_fixed is not None:
-            num_free = 0 if data.unused_vars_free is None else len(data.unused_vars_free)
+            num_free = (
+                0 if data.unused_vars_free is None else len(data.unused_vars_free)
+            )
             num_fixed = (
                 0 if data.unused_vars_fixed is None else len(data.unused_vars_fixed)
             )
