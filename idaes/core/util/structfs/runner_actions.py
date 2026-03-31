@@ -590,10 +590,6 @@ class ModelVariables(Action):
             items.append(item)
         return items, indexed
 
-    @classmethod
-    def _unitstr(cls, c):
-        return str(pyo.units.get_units(c))
-
     @staticmethod
     def _unitstr(c):
         # Convert Pyomo units obj to string
