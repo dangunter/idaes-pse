@@ -190,7 +190,9 @@ def test_diagnostics_built_flash(flash_build_model):
 def test_diagnostics_solved_flash(flash_solve_model):
     diag = cd.DiagnosticsData(model=flash_solve_model)
     results_dict = diag.all_as_dict()
+    assert results_dict
     results_json = diag.all_as_json()
+    assert results_json
     # check structure and contents of returned data
     struct_cautions = results_dict["structural_issues"]["cautions"]
     assert struct_cautions["zero_vars"] == [
