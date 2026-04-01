@@ -245,6 +245,8 @@ class ConstraintCondition(str, Enum):
 
 
 class DiagnosticsError(Exception):
+    """For errors in DiagnosticsData."""
+
     pass
 
 
@@ -616,6 +618,9 @@ class DiagnosticsData:
             kwargs["value_format"] = ".3E"
             bounds = {"small": t_small, "large": t_large}
             bounds_desc = "extreme jacobians"
+        else:
+            # guard against fall-through
+            raise RuntimeError(f"Unhandled variable condition: {cond}")
 
         # return as Pydantic data object
         return VariableListData(
@@ -687,7 +692,8 @@ class DiagnosticsData:
             bounds = {"small": t_small, "large": t_large}
             bounds_desc = "extreme jacobians"
         else:
-            raise ValueError(f"Unhandled constraint condition: {cond}")
+            # guard against fall-through
+            raise RuntimeError(f"Unhandled constraint condition: {cond}")
 
         if not details:
             details = [""] * len(names)
