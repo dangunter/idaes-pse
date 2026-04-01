@@ -247,8 +247,6 @@ class ConstraintCondition(str, Enum):
 class DiagnosticsError(Exception):
     """For errors in DiagnosticsData."""
 
-    pass
-
 
 class DiagnosticsData:
     """Interface to get diagnostics data"""
