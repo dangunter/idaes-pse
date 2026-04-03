@@ -76,4 +76,5 @@ def set_solver(ctx):
 @FS.step("solve_initial")
 def solve(ctx):
     """Perform the initial model solve."""
-    ctx["results"] = ctx.solver.solve(ctx.model, tee=ctx["tee"])
+    ctx.solve()
+    # ctx["result"] = ctx.solver.solve(ctx.model, tee=ctx["tee"])

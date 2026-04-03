@@ -54,7 +54,7 @@ from idaes.core.util.compute_diagnostics import (
     DiagnosticsError,
 )
 from .runner import Action
-from .fsrunner import FlowsheetRunner
+from .fsrunner import FlowsheetRunner, Context
 
 
 class Timer(Action):
@@ -414,7 +414,57 @@ class UnitDofChecker(Action):
         return dof
 
 
-class CaptureSolverOutput(Action):
+class SolverActionBase(Action):
+    def __init__(self, runner: FlowsheetRunner, **kwargs):
+        """Initialize solver output capture state.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
+        super().__init__(runner, **kwargs)
+        self._is_solve_step_fn = self._default_solve_step_check
+
+    def set_solve_step(self, match: str | Callable):
+        """Set the step whose output should be captured.
+
+        Args:
+            match: Either a step name to treat as the solver step, or a
+                   function (returning True/False) that takes the name
+                   as its only argument.
+        """
+        if isinstance(match, str):
+            self._is_solve_step_fn = lambda s: s == match
+        else:
+            try:
+                match("")
+            except TypeError:
+                raise RuntimeError(
+                    "Solve step must be string or function taking one "
+                    "string argument"
+                )
+            self._is_solve_step_fn = match
+
+    def is_solve_step(self, name: str) -> bool:
+        """Whether step `name` is the solve step.
+
+        This can be explicitly controlled by calling `set_solve_step()`
+        with the step name that must match exactly.
+        Otherwise, the internal `_default_solve_step_check()` function is used.
+
+        Args:
+            name: step name
+
+        Returns:
+            True if it is the solve step, otherwise False
+        """
+        return self._is_solve_step_fn(name)
+
+    def _default_solve_step_check(self, name: str) -> bool:
+        return name.startswith("solve")
+
+
+class CaptureSolverOutput(SolverActionBase):
     """Capture the solver output."""
 
     class Report(BaseModel):
@@ -423,7 +473,7 @@ class CaptureSolverOutput(Action):
         #: String of output keyed by step
         output: dict[str, str] = {}
 
-    def __init__(self, runner, **kwargs):
+    def __init__(self, runner: FlowsheetRunner, **kwargs):
         """Initialize solver output capture state.
 
         Args:
@@ -433,19 +483,10 @@ class CaptureSolverOutput(Action):
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
-        self._user_solve_step = None
-
-    def set_solve_step(self, name):
-        """Set the step name whose output should be captured.
-
-        Args:
-            name: Step name to treat as the solver step.
-        """
-        self._user_solve_step = name
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
-        if self._is_solve_step(step_name):
+        if self.is_solve_step(step_name):
             self._solver_out = StringIO()
             self._save_stdout, sys.stdout = sys.stdout, self._solver_out
 
@@ -456,11 +497,6 @@ class CaptureSolverOutput(Action):
             self._solver_out = None
             sys.stdout = self._save_stdout
 
-    def _is_solve_step(self, name: str):
-        if self._user_solve_step:
-            return name == self._user_solve_step
-        return name.startswith("solve")
-
     def report(self) -> Report:
         """Machine-readable report with solver output.
 
@@ -468,6 +504,86 @@ class CaptureSolverOutput(Action):
             CaptureSolverOutput.Report
         """
         return self.Report(output=self._logs)
+
+
+class SolverResult(BaseModel):
+    """One solver result in `GetSolverResults.Report.result`"""
+
+    problem: dict[str, int | float | str] = {}
+    solver: dict[str, int | float | str] = {}
+
+
+class GetSolverResults(SolverActionBase):
+    """Retrieve and structure the results from the solver."""
+
+    class Report(BaseModel):
+        """Report object for action"""
+
+        #: Result from Pyomo solver Result object
+        #: Since multiple results may be returned,
+        #: this is a list.
+        results: list[SolverResult] = []
+
+    def __init__(self, runner: FlowsheetRunner, **kwargs):
+        """Constructor.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
+        super().__init__(runner, **kwargs)
+        self._results = []
+
+    def after_step(self, step_name: str):
+        """Action performed after the step."""
+        if self.is_solve_step(step_name):
+            ctx: Context = self._runner._context
+            self._results = self._extract_results(ctx.results)
+
+    def _extract_results(self, r) -> list[dict]:
+        # extract Pyomo dict of lists into a list of SolverResult objs
+        # eg {"Solver": [{...}, ], "Problem": [{...},]} ->
+        #    [SolverResult, SolverResult]
+        result_list = []
+        for k, v in r.items():
+            n = len(v)
+            # make sure result list has space
+            while n > len(result_list):
+                result_list.append(SolverResult())
+            # choose which part of result this is
+            if k == "Solver":
+                sr_attr = "solver"
+            elif k == "Problem":
+                sr_attr = "problem"
+            else:
+                self.log.warning(f"Ignoring unknown key in solver results: {k}")
+                continue
+            # extract Pyomo list for a given attr into SolverResult
+            for i in range(n):
+                v_dict = {}
+                # convert values in dict to int, str, float, or None
+                for v_k, v_v in v[i].items():
+                    if hasattr(v_v, "get_value"):
+                        v_v = v_v.get_value()
+                    if isinstance(v_v, int) or isinstance(v_v, float):
+                        v_dict[v_k] = v_v
+                    else:
+                        s = str(v_v)
+                        if s == "<undefined>":
+                            pass  # who cares? skip it
+                        else:
+                            v_dict[v_k] = s
+                # set the corresponding i-th result attribute
+                setattr(result_list[i], sr_attr, v_dict)
+        return result_list
+
+    def report(self) -> Report:
+        """Report solver result.
+
+        Returns:
+            GetSolverResult.Report
+        """
+        return self.Report(results=self._results)
 
 
 class ModelVariables(Action):

@@ -27,7 +27,9 @@ from .. import runner
 from ..fsrunner import FlowsheetRunner
 from ..runner_actions import (
     ComponentList,
+    SolverActionBase,
     CaptureSolverOutput,
+    GetSolverResults,
     Diagnostics,
     MermaidDiagram,
     ModelVariables,
@@ -560,3 +562,81 @@ def test_model_variables():
 def turn_off_mermaid_server(runner):
     dg = runner.get_action("mermaid_diagram")
     dg.show_unit_images(False)
+
+
+@pytest.mark.unit
+def test_solver_action_base_class():
+    rn = flash_flowsheet.FS
+
+    class SolverAction_Concrete(SolverActionBase):
+        def report():
+            return {}
+
+    # default solve step
+    obj = SolverAction_Concrete(runner=rn)
+    assert obj.is_solve_step("") is False
+    assert obj.is_solve_step("solve_something") is True
+
+    # user option
+    step_name = "foobar"
+
+    def check_name(s):
+        return s == step_name
+
+    for option in (step_name, check_name):
+        obj.set_solve_step(option)
+        assert obj.is_solve_step("") is False
+        assert obj.is_solve_step("solve_something") is False
+        assert obj.is_solve_step(step_name) is True
+        assert obj.is_solve_step(step_name.capitalize()) is False
+
+
+@pytest.mark.unit
+def test_get_solver_result_class():
+    from pyomo.contrib.solver.common.results import Results, ConfigValue
+
+    # build a Pyomo Results object
+    result_values = {"foo": 1, "bar": 2}
+    pyomo_results = Results(description="ignore me")
+    for k, v in result_values.items():
+        pyomo_results.declare(k, ConfigValue(domain=int))
+        pyomo_results[k] = v
+
+    class FakeRunner(FlowsheetRunner):
+        def __init__(self):
+            super().__init__()
+            self._context.results = {"Result": [pyomo_results]}
+
+    flowsheet = FakeRunner()
+    action = GetSolverResults(runner=flowsheet)
+    action.after_step("solve")
+    report = action.report()
+    # check non-empty report
+    assert report
+    assert report.results
+    # check values inside result object
+    print(f"report results: {report.results}")
+    r0 = report.results[0]
+    for k, v in result_values.items():
+        assert report.results[0]["Result"][k] == v
+
+
+@pytest.mark.integration
+def test_get_solver_result_class_integration():
+    flowsheet = flash_flowsheet.FS
+    # pre-check on syntactic sugar for status
+    assert flowsheet.solver_status == "unknown"
+    flowsheet.run_steps()
+    report = flowsheet.report()
+    # check non-empty report
+    assert report
+    # check values inside result
+    actions = report["actions"]
+    results = actions["solver_results"]["results"]
+    print(f"RESULTS: {results}")
+    assert results
+    assert len(results) == 1
+    result = results[0]
+    assert result["solver"]["Status"] == "ok"
+    # check the syntactic sugar version
+    assert flowsheet.solver_status == "ok"

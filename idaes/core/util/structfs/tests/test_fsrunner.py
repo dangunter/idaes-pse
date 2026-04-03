@@ -25,7 +25,7 @@ from pyomo.environ import assert_optimal_termination
 @pytest.mark.unit
 def test_run_all():
     flash_fs.run_steps()
-    assert_optimal_termination(flash_fs.results)
+    assert_optimal_termination(flash_fs.result)
 
 
 @pytest.mark.unit
@@ -122,7 +122,7 @@ def test_sfi_before():
 @pytest.mark.unit
 def test_sfi_after():
     FS.run_steps()
-    assert FS.results.solver.status == SolverStatus.ok
+    assert FS.result.solver.status == SolverStatus.ok
 
 
 # pacify linters
@@ -154,7 +154,7 @@ def test_context_solve_and_properties(monkeypatch):
     ctx = Context(model="model", solver=None, tee=False)
     ctx.solve()
     assert seen["call"] == ("model", False)
-    assert ctx.results == "solved"
+    assert ctx.result == "solved"
     assert ctx.result == "solved"
 
     ctx.result = "updated"

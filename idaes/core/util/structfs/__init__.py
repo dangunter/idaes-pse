@@ -194,8 +194,8 @@ Details on the changes:
   called `m`) with a context object that has a `.model` attribute.
 * **44-46**: Add a function for the `set_solver` step, to select the solver
   (here, IPOPT).
-* **46**: In the "solve_optimization" step, call the solver, which will assign the result to `ctx.results`,
-  which is also accessible as `FS.results`.
+* **46**: In the "solve_optimization" step, call the solver, which will assign the result to `ctx.result`,
+  which is also accessible as `FS.result`.
 
 ## Step 2: Execute and inspect
 
@@ -209,7 +209,7 @@ could do this:
 
 ```{code}
 FS.run_steps()
-assert FS.results.solver.status == SolverStatus.ok
+assert FS.result.solver.status == SolverStatus.ok
 ```
 
 Some more examples of using the FlowsheetRunner are shown in the

@@ -63,10 +63,10 @@ class Context(dict):
         self["solver"] = value
 
     def solve(self):
-        """Perform solve, store results"""
+        """Perform solve, store result"""
         if self.solver is None:
             self.solver = SolverFactory(DEFAULT_SOLVER_NAME)
-        self["results"] = self.solver.solve(self.model, tee=self["tee"])
+        self.results = self.solver.solve(self.model, tee=self["tee"])
 
     @property
     def tee(self):
@@ -86,17 +86,8 @@ class Context(dict):
         """
         return self.get("results", None)
 
-    @property
-    def result(self):
-        """Return the stored solver results.
-
-        Returns:
-            The stored solver results object.
-        """
-        return self["results"]
-
-    @result.setter
-    def result(self, value):
+    @results.setter
+    def results(self, value):
         """Store solver results in the context.
 
         Args:
@@ -211,9 +202,9 @@ class BaseFlowsheetRunner(Runner):
 
     @property
     def results(self):
-        """Syntactic sugar to return the `results` in the context.
+        """Syntactic sugar to return the `result` in the context.
         Returns:
-            Results from Pyomo, or None if not set
+            results from Pyomo, or None if not set
         """
         return self._context.results
 
@@ -396,14 +387,15 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         """Initialize a flowsheet runner with default inspection actions.
 
         Args:
-            solve_step: Optional step name whose output should be captured as
-                solver output. If not provided, steps whose names start with
-                `"solve"` are captured.
+            solve_step: Optional step name or function to pass to the
+                        `set_solve_step()` method of `CaptureSolverOutput`
+                        and `GetSolverResult`.
             **kwargs: Additional keyword arguments passed to
                 `BaseFlowsheetRunner`.
         """
         from .runner_actions import (  # pylint: disable=C0415
             CaptureSolverOutput,
+            GetSolverResults,
             ModelVariables,
             MermaidDiagram,
             Diagnostics,
@@ -412,9 +404,13 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         super().__init__(**kwargs)
         self.dof = self.DegreesOfFreedom(self)
         self.timings = self.Timings(self)
-        self.add_action("solver_output", CaptureSolverOutput)
-        if solve_step is not None:
-            self.get_action("solver_output").set_solve_step(solve_step)
+        for name, clazz in (
+            ("solver_output", CaptureSolverOutput),
+            ("solver_results", GetSolverResults),
+        ):
+            self.add_action(name, clazz)
+            if solve_step is not None:
+                self.get_action(name).set_solve_step(solve_step)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
         self.add_action("diagnostics", Diagnostics)
@@ -433,3 +429,17 @@ class FlowsheetRunner(BaseFlowsheetRunner):
             return display_connectivity(input_model=self.model)
         else:
             return ""
+
+    @property
+    def solver_status(self) -> str:
+        """Solver status, from Pyomo
+
+        Returns:
+            str: Pyomo value (e.g., "ok") or "unknown" if it cannot be found
+        """
+        rpt = self.get_action("solver_results").report()
+        if len(rpt.results) > 0:
+            value = rpt.results[0].solver["Status"]
+        else:
+            value = "unknown"
+        return value
