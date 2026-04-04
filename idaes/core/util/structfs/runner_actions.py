@@ -54,7 +54,7 @@ from idaes.core.util.compute_diagnostics import (
     DiagnosticsError,
 )
 from .runner import Action
-from .fsrunner import FlowsheetRunner, Context
+from .fsrunner import FlowsheetRunner
 
 
 class Timer(Action):
@@ -415,6 +415,8 @@ class UnitDofChecker(Action):
 
 
 class SolverActionBase(Action):
+    """Base class for actions to get solver state, output, etc."""
+
     def __init__(self, runner: FlowsheetRunner, **kwargs):
         """Initialize solver output capture state.
 
@@ -537,10 +539,10 @@ class GetSolverResults(SolverActionBase):
     def after_step(self, step_name: str):
         """Action performed after the step."""
         if self.is_solve_step(step_name):
-            ctx: Context = self._runner._context
-            self._results = self._extract_results(ctx.results)
+            self._extract_results()
 
-    def _extract_results(self, r) -> list[dict]:
+    def _extract_results(self):
+        r = self._runner.results
         # extract Pyomo dict of lists into a list of SolverResult objs
         # eg {"Solver": [{...}, ], "Problem": [{...},]} ->
         #    [SolverResult, SolverResult]
@@ -551,10 +553,8 @@ class GetSolverResults(SolverActionBase):
             while n > len(result_list):
                 result_list.append(SolverResult())
             # choose which part of result this is
-            if k == "Solver":
-                sr_attr = "solver"
-            elif k == "Problem":
-                sr_attr = "problem"
+            if k in ("Solver", "Problem"):
+                sr_attr = k.lower()
             else:
                 self.log.warning(f"Ignoring unknown key in solver results: {k}")
                 continue
@@ -575,7 +575,7 @@ class GetSolverResults(SolverActionBase):
                             v_dict[v_k] = s
                 # set the corresponding i-th result attribute
                 setattr(result_list[i], sr_attr, v_dict)
-        return result_list
+        self._results = result_list
 
     def report(self) -> Report:
         """Report solver result.

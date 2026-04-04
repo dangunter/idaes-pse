@@ -79,6 +79,17 @@ class Runner:
         """Look for key in `context`"""
         return self._context[key]
 
+    def __getattr__(self, key):
+        """For attributes not in the class, look to see if they
+        match attributes on the context and if so return that value.
+        """
+        if hasattr(self._context, key):
+            return getattr(self._context, key)
+        raise AttributeError(
+            f"Runner object has no attribute '{key}' and "
+            f"'{key}' is not an attribute of the context object"
+        )
+
     def add_step(self, name: str, func: Callable):
         """Add a step.
 

@@ -29,6 +29,7 @@ from ..runner_actions import (
     ComponentList,
     SolverActionBase,
     CaptureSolverOutput,
+    SolverResult,
     GetSolverResults,
     Diagnostics,
     MermaidDiagram,
@@ -605,7 +606,8 @@ def test_get_solver_result_class():
     class FakeRunner(FlowsheetRunner):
         def __init__(self):
             super().__init__()
-            self._context.results = {"Result": [pyomo_results]}
+            # results go under the "Solver" key
+            self._context.results = {"Solver": [pyomo_results]}
 
     flowsheet = FakeRunner()
     action = GetSolverResults(runner=flowsheet)
@@ -615,10 +617,10 @@ def test_get_solver_result_class():
     assert report
     assert report.results
     # check values inside result object
-    print(f"report results: {report.results}")
+    print(f"report results: {report.results}")  # debug
     r0 = report.results[0]
     for k, v in result_values.items():
-        assert report.results[0]["Result"][k] == v
+        assert r0.solver[k] == v
 
 
 @pytest.mark.integration
