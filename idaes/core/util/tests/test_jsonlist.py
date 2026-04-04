@@ -14,10 +14,14 @@
 Tests for jlist.JsonList module
 """
 
+from collections import namedtuple
 import json
 import logging
 from pathlib import Path
+from random import random, randint
 from tempfile import TemporaryDirectory
+import time
+from uuid import uuid4
 
 import pytest
 
@@ -25,6 +29,9 @@ import idaes.core.util.jsonlist as jlist
 
 # debug
 jlist._log.setLevel(logging.DEBUG)
+
+# Fixtures
+# --------
 
 
 @pytest.fixture
@@ -55,6 +62,34 @@ def sample_jlist_with_data():
             n = len(line1)
             f.write(f"{n},002,fake2,tag_1;tag_2\n")
         yield jlist.JsonList(data_file, index_file)
+
+
+@pytest.fixture
+def big_obj():
+    """For the performance test"""
+    N = 20
+
+    def random_key():
+        return str(uuid4())
+
+    def random_value():
+        return random() * 1e6
+
+    obj = {}
+    for i in range(N):
+        d = []
+        for j in range(N):
+            e = {}
+            for k in range(N):
+                e[random_key()] = random_value()
+            d.append(e)
+        obj[random_key()] = d
+
+    return {"object": obj}
+
+
+# Unit tests
+# ----------
 
 
 @pytest.mark.unit
@@ -145,3 +180,74 @@ def test_get_doc(sample_jlist_with_data):
     assert doc == json.loads(line2)
     doc = jl[-1]
     assert doc == json.loads(line2)
+
+
+# Integration tests
+# -----------------
+
+
+def timing_summary(title, times, ms=False):
+    num = len(times)
+    t_tot = sum(times)
+    t_mean = t_tot / num
+    t_min, t_min_idx, t_max, t_max_idx = 1e6, -1, -1, -1
+    for idx, t in enumerate(times):
+        if t < t_min:
+            t_min, t_min_idx = t, idx
+        if t > t_max:
+            t_max, t_max_idx = t, idx
+    if ms:
+        t_tot *= 1000
+        t_mean *= 1000
+        t_min *= 1000
+        t_max *= 1000
+        units = "ms"
+    else:
+        unite = "s"
+    print(
+        f"{title} {num}: total={t_tot:.3f}ms average={t_mean:.3f}ms "
+        f"min({t_min_idx})={t_min:.3f}ms max({t_max_idx})={t_max:.3f}ms"
+    )
+
+
+@pytest.mark.integration
+def test_perf(big_obj, sample_jlist_empty):
+    big_obj_str = json.dumps(big_obj)
+    size = len(big_obj_str)
+    num = 20
+
+    print(f"Creating JsonList with {num} objects of size {size} bytes")
+
+    jl = sample_jlist_empty
+
+    times = []
+    for i in range(num):
+        t0 = time.time()
+        jl.append(big_obj_str, hash="hello", desc="hello, world", tags=["perf", str(i)])
+        t1 = time.time()
+        times.append(t1 - t0)
+    timing_summary("Append", times, ms=True)
+
+    times = []
+    tries = 10
+    print(f"Deserialize {tries} objects")
+    for i in range(tries):
+        idx = randint(0, num - 1)
+        t0 = time.time()
+        obj = json.loads(big_obj_str)
+        t1 = time.time()
+        times.append(t1 - t0)
+    timing_summary("Deserialize", times, ms=True)
+    print("Will subtract min deserialization time from retrieve time")
+    d_time = min(times)
+
+    times = []
+    tries = 100
+    print(f"Retrieve {tries} objects")
+    for i in range(tries):
+        idx = randint(0, num - 1)
+        t0 = time.time()
+        obj = jl[idx]
+        t1 = time.time()
+        times.append(t1 - t0 - d_time)
+    timing_summary("Retrieve (minus min(deserialize))", times, ms=True)

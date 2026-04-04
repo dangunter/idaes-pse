@@ -24,6 +24,8 @@ from typing import Optional, Iterable
 
 _log = logging.getLogger(__name__)
 
+__author__ = "Dan Gunter (LBNL)"
+
 
 class BadIndexFile(Exception):
     """Raised if index file is not expected format, or is not accessible."""
@@ -144,9 +146,9 @@ class JsonList:
             wrt.writerow(self._INDEX_FILE_HEADER)
             for i in range(self._index_len):
                 row = []
-                # format certain columns as strings
                 for colname in self._INDEX_FILE_HEADER:
                     value = self._index[colname][i]
+                    # format certain columns as strings
                     if colname == "offset":
                         value = str(value)
                     elif colname == "tags":
@@ -185,7 +187,7 @@ class JsonList:
                 self._index_len += 1
                 for j, value in enumerate(row):
                     colname = header[j]
-                    # parse certain values
+                    # parse certain column string values
                     if colname == "offset":
                         value = int(value)
                     elif colname == "tags":
