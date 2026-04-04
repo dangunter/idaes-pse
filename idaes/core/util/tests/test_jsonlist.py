@@ -203,10 +203,10 @@ def timing_summary(title, times, ms=False):
         t_max *= 1000
         units = "ms"
     else:
-        unite = "s"
+        units = "s"
     print(
-        f"{title} {num}: total={t_tot:.3f}ms average={t_mean:.3f}ms "
-        f"min({t_min_idx})={t_min:.3f}ms max({t_max_idx})={t_max:.3f}ms"
+        f"{title} {num}: total={t_tot:.3f}{units} average={t_mean:.3f}{units} "
+        f"min({t_min_idx})={t_min:.3f}{units} max({t_max_idx})={t_max:.3f}{units}"
     )
 
 
