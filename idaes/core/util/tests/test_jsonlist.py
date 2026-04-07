@@ -56,19 +56,27 @@ def sample_jlist_with_data():
         with open(data_file, "w") as f:
             f.write(f"{line1}\n{line2}\n")
         index_file = tmpdir / "sample-index.csv"
+        ts = time.time()
         with open(index_file, "w") as f:
-            f.write("offset,hash,desc,tags\n")
-            f.write("0,001,fake1,tag_1;tag_2\n")
+            f.write("offset,timestamp,hash,desc,tags\n")
+            f.write(f"0,{ts},001,fake1,tag_1;tag_2\n")
             n = len(line1)
-            f.write(f"{n},002,fake2,tag_1;tag_2\n")
+            f.write(f"{n},{ts + 1},002,fake2,tag_1;tag_2\n")
         yield jlist.JsonList(data_file, index_file)
 
 
 @pytest.fixture
 def big_obj():
     """For the performance test"""
-    N = 20
+    return _create_obj(20)
 
+
+@pytest.fixture
+def medium_obj():
+    return _create_obj(5)
+
+
+def _create_obj(n):
     def random_key():
         return str(uuid4())
 
@@ -76,11 +84,11 @@ def big_obj():
         return random() * 1e6
 
     obj = {}
-    for i in range(N):
+    for i in range(n):
         d = []
-        for j in range(N):
+        for j in range(n):
             e = {}
-            for k in range(N):
+            for k in range(n):
                 e[random_key()] = random_value()
             d.append(e)
         obj[random_key()] = d
@@ -182,6 +190,92 @@ def test_get_doc(sample_jlist_with_data):
     assert doc == json.loads(line2)
 
 
+@pytest.mark.unit
+def test_user_metadata(tmpdir):
+    data_file = tmpdir / "extra-columns.json"
+    long_text = """Early one morning the sun was shining
+I was laying in bed
+Wondering if she'd changed at all
+If her hair was still red"""
+    user_data = {
+        "values": [{"x": 1.0, "y": 100.0, "text": long_text}, {"x": 2.0, "y": 200.0}]
+    }
+    jl = jlist.JsonList(data_file)
+    jl.append({"hello": "world"}, ext=user_data)
+    # close and reopen
+    jl = jlist.JsonList(data_file)
+    # now check from saved
+    for item in jl.metadata:
+        assert item["ext"] == user_data
+
+
+@pytest.mark.unit
+def test_delete(tmpdir, medium_obj):
+    data_file = tmpdir / "delete.json"
+    jl = jlist.JsonList(data_file)
+
+    # add some objects, adding a number 'i'
+    for i in range(15):
+        medium_obj["i"] = i
+        jl.append(medium_obj, ext={"index": i})
+
+    # delete first 5
+    jl.delete(start=0, num=5)
+    # check that there are 10 now
+    assert len(jl) == 10
+    # check that they have i == 5..14
+    # since 0..4 were deleted
+    meta = list(jl.metadata)
+    for i in range(10):
+        print(f"check1: metadata[{i}] = {meta[i]}")
+        print(f"check1: jl[{i}]['i'] == {jl[i]['i']}")
+        assert jl[i]["i"] == i + 5
+        assert meta[i]["ext"]["index"] == i + 5
+
+    # delete last 5
+    jl.delete(start=5, num=5)
+    # check that there are 5 now
+    assert len(jl) == 5
+    # check that they have i == 5..9
+    meta = list(jl.metadata)
+    for i in range(5):
+        print(f"check2: metadata[{i}] = {meta[i]}")
+        print(f"check2: jl[{i}]['i'] == {jl[i]['i']}")
+        assert jl[i]["i"] == i + 5
+        assert meta[i]["ext"]["index"] == i + 5
+
+    # delete third
+    jl.delete(start=2, num=1)
+    # check that there are 4 now
+    assert len(jl) == 4
+    # check that they have i == 5, 6, 8, 9
+    meta = list(jl.metadata)
+    assert jl[0]["i"] == 5
+    assert meta[0]["ext"]["index"] == 5
+    assert jl[1]["i"] == 6
+    assert meta[1]["ext"]["index"] == 6
+    assert jl[2]["i"] == 8
+    assert meta[2]["ext"]["index"] == 8
+    assert jl[3]["i"] == 9
+    assert meta[3]["ext"]["index"] == 9
+
+
+@pytest.mark.unit
+def test_delete_bad_args(sample_jlist_empty):
+    jl = sample_jlist_empty
+
+    for bad_start in (-1, len(jl)):
+        with pytest.raises(ValueError):
+            jl.delete(start=bad_start)
+
+    with pytest.raises(ValueError):
+        jl.delete(start=0)
+
+    for bad_start, bad_num in ((0, len(jl) + 1), (1, len(jl))):
+        with pytest.raises(ValueError):
+            jl.delete(start=bad_start, num=bad_num)
+
+
 # Integration tests
 # -----------------
 
@@ -251,3 +345,15 @@ def test_perf(big_obj, sample_jlist_empty):
         t1 = time.time()
         times.append(t1 - t0 - d_time)
     timing_summary("Retrieve (minus min(deserialize))", times, ms=True)
+
+
+@pytest.mark.integration
+def test_with_structfs_report(sample_jlist_empty):
+    from idaes.core.util.structfs.tests import flash_flowsheet
+
+    # run twice
+    for i in range(2):
+        flash_flowsheet.FS.run_steps()
+        rpt = flash_flowsheet.FS.report()
+        jl = sample_jlist_empty
+        jl.append(rpt, desc="Flash flowsheet for test")
