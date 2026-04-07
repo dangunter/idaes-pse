@@ -11,7 +11,7 @@
 # for full copyright and license information.
 #################################################################################
 """
-List of JSON documents, with accompanying index
+List of JSON documents, with accompanying index, as two files.
 """
 
 # stdlib
@@ -191,7 +191,7 @@ class JsonList:
 
     def _chunked_delete(self, start_offs, end_offs, filesz):
         """Overwrite area to delete by moving up bytes
-        from end of file, in 1MB 'chunks'.
+        in rest of file, in 1MB 'chunks'.
         """
         chunk_size = 1024 * 1024
         with self.data_file.open("r+b") as f:
