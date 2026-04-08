@@ -85,7 +85,7 @@ class JsonList:
         else:
             is_last = index == self._index_len - 1
         offs = self._index["offset"][index]
-        with self.data_file.open("r") as f:
+        with self.data_file.open("rb") as f:
             f.seek(offs)
             buf = f.read() if is_last else f.readline()
         return json.loads(buf)
@@ -137,10 +137,10 @@ class JsonList:
         if tags is None:
             tags = []
         # add document to data file
-        with self.data_file.open("a") as f:
+        with self.data_file.open("ab") as f:
             offs = f.tell()
-            f.write(clean_doc)
-            f.write("\n")
+            f.write(clean_doc.encode("utf-8"))
+            f.write(b"\n")
         # add to index
         self._index["offset"].append(offs)
         self._index["timestamp"].append(ts)
@@ -177,7 +177,7 @@ class JsonList:
             )
 
         # compute offsets and modify data file
-        with self.data_file.open("r") as f:
+        with self.data_file.open("rb") as f:
             filesz = f.seek(0, 2)
         start_offs = self._index["offset"][start]
         if end < self._index_len:
@@ -185,7 +185,7 @@ class JsonList:
             self._chunked_delete(start_offs, end_offs, filesz)
         else:
             # if delete to end of file, just truncate file
-            with self.data_file.open("a") as f:
+            with self.data_file.open("ab") as f:
                 f.truncate(start_offs)
             end_offs = None  # flag, no offset mods needed
 
@@ -224,7 +224,7 @@ class JsonList:
 
     def _write_index(self):
         """Write out index file."""
-        with open(self.index_file, "w") as f:
+        with open(self.index_file, "w", newline="\n") as f:
             wrt = csv.writer(f)
             wrt.writerow(self._INDEX_FILE_HEADER)
             for i in range(self._index_len):
@@ -256,14 +256,14 @@ class JsonList:
                 f"new file '{self.index_file}': create index file and add header"
             )
             try:
-                with self.index_file.open("w") as f:
+                with self.index_file.open("w", newline="\n") as f:
                     wrt = csv.writer(f)
                     wrt.writerow(self._INDEX_FILE_HEADER)
             except IOError as err:
                 raise BadIndexFile(f"{self.index_file} cannot be created: {err}")
 
         _log.debug(f"load index file '{self.index_file}'")
-        with self.index_file.open("r") as f:
+        with self.index_file.open("r", newline="\n") as f:
             rdr = csv.reader(f)
             try:
                 header = next(rdr)
