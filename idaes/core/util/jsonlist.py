@@ -122,7 +122,7 @@ class JsonList:
         Args:
             doc: JSON document to append
             file_hash: File hash
-            desc: Description (newlines will be converted to \n)
+            desc: Description (newlines will be converted)
             tags: List of string tags (any non-alphanumeric chars
                   will be converted to underscores)
             ext: User-supplied metadata in a dict. This must be
