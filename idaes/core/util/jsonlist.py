@@ -112,7 +112,7 @@ class JsonList:
     def append(
         self,
         doc: dict | str,
-        hash: str = "",
+        file_hash: str = "",
         desc: str = "",
         tags: Optional[list[str]] = None,
         ext: Optional[dict] = None,
@@ -121,7 +121,7 @@ class JsonList:
 
         Args:
             doc: JSON document to append
-            hash: File hash
+            file_hash: File hash
             desc: Description (newlines will be converted to \n)
             tags: List of string tags (any non-alphanumeric chars
                   will be converted to underscores)
@@ -144,7 +144,7 @@ class JsonList:
         # add to index
         self._index["offset"].append(offs)
         self._index["timestamp"].append(ts)
-        self._index["hash"].append(hash)
+        self._index["hash"].append(file_hash)
         self._index["desc"].append(desc)
         self._index["tags"].append(tags)
         self._index["ext"].append(ext or {})
@@ -152,6 +152,15 @@ class JsonList:
         self._write_index()
 
     def delete(self, start: int = 0, num: int = 0):
+        """Delete some consecutive documents.
+
+        Args:
+            start: Start index of first document to delete.
+            num: Number of documents to delete
+
+        Raises:
+            ValueError: if (start .. start+num) is not a valid range
+        """
         # check args
         if start < 0 or start >= self._index_len:
             raise ValueError(
@@ -275,8 +284,16 @@ class JsonList:
                     elif colname == "timestamp":
                         value = float(value)
                     elif colname == "ext":
-                        json_value = value[1:-1]  # strip quotes
-                        value = json.loads(json_value)
+                        # parse JSON value, allowing for
+                        # quoted/unquoted and empty values
+                        if value:
+                            if value[0] == '"' and value[-1] == '"':
+                                json_value = value[1:-1]
+                            else:
+                                json_value = value
+                        else:
+                            json_value = value
+                        value = json.loads(json_value) if json_value else {}
                     # add row values to index
                     self._index[header[j]].append(value)
             _log.debug(f"read {self._index_len} index file rows")

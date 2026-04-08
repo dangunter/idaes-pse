@@ -58,10 +58,10 @@ def sample_jlist_with_data():
         index_file = tmpdir / "sample-index.csv"
         ts = time.time()
         with open(index_file, "w") as f:
-            f.write("offset,timestamp,hash,desc,tags\n")
-            f.write(f"0,{ts},001,fake1,tag_1;tag_2\n")
+            f.write("offset,timestamp,hash,desc,tags,ext\n")
+            f.write(f"0,{ts},001,fake1,tag_1;tag_2,{{}}\n")
             n = len(line1)
-            f.write(f"{n},{ts + 1},002,fake2,tag_1;tag_2\n")
+            f.write(f'{n},{ts + 1},002,fake2,tag_1;tag_2,"{{}}"\n')
         yield jlist.JsonList(data_file, index_file)
 
 
@@ -144,11 +144,15 @@ def test_append(sample_jlist_empty):
     count = 0
     for meta in (
         {},
-        {"hash": "123"},
-        {"hash": "123", "desc": "hello"},
-        {"hash": "123", "desc": "hello", "tags": ["a"]},
-        {"hash": "123", "desc": "hello", "tags": ["a", "to be or not to b$$"]},
-        {"hash": "123", "desc": "hello,\nworld", "tags": ["a", "to be or not to b$$"]},
+        {"file_hash": "123"},
+        {"file_hash": "123", "desc": "hello"},
+        {"file_hash": "123", "desc": "hello", "tags": ["a"]},
+        {"file_hash": "123", "desc": "hello", "tags": ["a", "to be or not to b$$"]},
+        {
+            "file_hash": "123",
+            "desc": "hello,\nworld",
+            "tags": ["a", "to be or not to b$$"],
+        },
     ):
         for doc in (data, json.dumps(data)):
             jl.append(doc, **meta)
@@ -317,7 +321,9 @@ def test_perf(big_obj, sample_jlist_empty):
     times = []
     for i in range(num):
         t0 = time.time()
-        jl.append(big_obj_str, hash="hello", desc="hello, world", tags=["perf", str(i)])
+        jl.append(
+            big_obj_str, file_hash="hello", desc="hello, world", tags=["perf", str(i)]
+        )
         t1 = time.time()
         times.append(t1 - t0)
     timing_summary("Append", times, ms=True)
