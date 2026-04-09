@@ -209,7 +209,7 @@ def test_mermaid_report():
 
 @pytest.mark.unit
 def test_stream_table_action_create():
-    obj = StreamTable("runner")
+    obj = StreamTable(flash_flowsheet.FS)
     assert obj
 
 
