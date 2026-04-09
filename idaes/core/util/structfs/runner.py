@@ -17,6 +17,7 @@ Run functions in a module in a defined, named, sequence.
 # stdlib
 from abc import ABC, abstractmethod
 import logging
+from types import FunctionType
 from typing import Callable, Optional, Tuple, Sequence, TypeVar
 
 # third party
@@ -63,6 +64,32 @@ class Runner:
 
     STEP_ANY = "-"
 
+    class StepHelper:
+        """Instances of this class will return the decorator function when an
+        attribute is invoked, allowing @decorator syntax like `@flowsheet.step.build`.
+        Also allows `@flowsheet.step("build")`.
+        """
+
+        def __init__(self, method):
+            """Constructor with `method` to invoke with given name."""
+            self._method = method
+
+        def __getattr__(self, name: str):
+            self._check_type(name)
+            return self._method(name)
+
+        def __call__(self, name: str):
+            self._check_type(name, call=True)
+            return self._method(name)
+
+        def _check_type(self, name, call=False):
+            if isinstance(name, str):
+                return
+            message = f"Step name must be a string, got '{type(name)}'"
+            if call and isinstance(name, FunctionType):
+                message += ". You may have '.step' instead of '.step.name'"
+            raise TypeError(message)
+
     def __init__(self, steps: Sequence[str]):
         """Constructor.
 
@@ -73,6 +100,7 @@ class Runner:
         self._actions: dict[str, ActionType] = {}
         self._step_names = list(steps)
         self._steps: dict[str, Step] = {}
+        self.step = self.StepHelper(self._step)
         self.reset()
 
     def __getitem__(self, key):
@@ -131,6 +159,10 @@ class Runner:
     def run_step(self, name):
         """Syntactic sugar for calling `run_steps` for a single step."""
         self.run_steps(first=name, last=name)
+
+    def run(self):
+        """Syntactic sugar for run_steps() with no args."""
+        return self.run_steps()
 
     def run_steps(
         self, first: str = "", last: str = "", after: str = "", before: str = ""
@@ -306,7 +338,7 @@ class Runner:
         for action in self._actions.values():
             action.after_substep(base, name)
 
-    def step(self, name: str):
+    def _step(self, name: str):
         """Decorator function for creating a new step.
 
         Args:

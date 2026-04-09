@@ -38,7 +38,7 @@ except ImportError:
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.core.base.unit_model import ProcessBlockData
 from .runner import Action
-from .fsrunner import FlowsheetRunner
+from .fsrunner import StructuredFlowsheet
 
 
 class Timer(Action):
@@ -198,7 +198,7 @@ class UnitDofChecker(Action):
 
     def __init__(
         self,
-        runner: FlowsheetRunner,
+        runner: StructuredFlowsheet,
         flowsheet: str,
         steps: Union[str, list[str]],
         step_func: Optional[Callable[[str, UnitDofType], None]] = None,
@@ -415,7 +415,7 @@ class ModelVariables(Action):
         variables: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
-        assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
+        assert isinstance(runner, StructuredFlowsheet)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
 
     def after_run(self):

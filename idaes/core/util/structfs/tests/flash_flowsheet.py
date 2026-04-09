@@ -23,9 +23,9 @@ from idaes.models.properties.activity_coeff_models.BTX_activity_coeff_VLE import
     BTXParameterBlock,
 )
 from idaes.models.unit_models import Flash
-from idaes.core.util.structfs.fsrunner import FlowsheetRunner
+from idaes.core.util.structfs.fsrunner import StructuredFlowsheet
 
-FS = FlowsheetRunner()
+FS = StructuredFlowsheet()
 
 # # Flash Unit Model
 #

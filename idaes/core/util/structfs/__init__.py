@@ -21,7 +21,7 @@ particular that package's {py:mod}`runner <structfs.runner>` and
 ## Overview
 
 The core idea of the
-{py:class}`FlowsheetRunner <structfs.fsrunner.FlowsheetRunner>` class is
+{py:class}`StructuredFlowsheet <structfs.fsrunner.StructuredFlowsheet>` class is
 that flowsheets should follow a standard set of "steps". By standardizing the
 naming and ordering of these steps, it becomes easier to build tools that run
 and inspect flowsheets. The Python mechanics of this are to put each step in a
@@ -43,7 +43,7 @@ More details are given below in the Actions section.
 It is assumed here that you have Python code to build, configure, and run an
 IDAES flowsheet. You will first arrange this code to follow the standard "steps"
 of a flowsheet workflow, which are listed in the
-{py:class}`BaseFlowsheetRunner <structfs.fsrunner.BaseFlowsheetRunner>`
+{py:class}`BaseStructuredFlowsheet <structfs.fsrunner.BaseStructuredFlowsheet>`
 class' `STEPS` attribute. Not all the steps need to be defined: the API will
 skip over steps with no definition when executing a range of steps. To make the
 code more structured you can also define internal sub-steps, as described later.
@@ -118,7 +118,7 @@ def solve(m):
 #### After
 
 In order to make this into a
-{py:class}`FlowsheetRunner <structfs.fsrunner.FlowsheetRunner>`-wrapped
+{py:class}`StructuredFlowsheet <structfs.fsrunner.StructuredFlowsheet>`-wrapped
 flowsheet, we need to do make a few changes. The modified file is shown below,
 with changed lines highlighted and descriptions below.
 
@@ -134,11 +134,11 @@ from idaes.models.properties.activity_coeff_models.BTX_activity_coeff_VLE \
 import ( BTXParameterBlock, )
 from idaes.models.unit_models import Flash
 
-from idaes.core.util.structfs.fsrunner import FlowsheetRunner
+from idaes.core.util.structfs import StructuredFlowsheet
 
-FS = FlowsheetRunner()
+flowsheet = StructuredFlowsheet()
 
-@FS.step("build") 
+@flowsheet.step.build
 def build_model(ctx):
     """Build the model."""
     m = ConcreteModel()
@@ -152,7 +152,7 @@ def build_model(ctx):
     # assert degrees_of_freedom(m) == 7
     ctx.model = m
 
-@FS.step("set_operating_conditions")
+@flowsheet.step.set_operating_conditions
 def set_operating_conditions(ctx):
     """Set operating conditions."""
     m = ctx.model
@@ -164,27 +164,27 @@ def set_operating_conditions(ctx):
     m.fs.flash.heat_duty.fix(0)
     m.fs.flash.deltaP.fix(0)
 
-@FS.step("initialize") 
+@flowsheet.step.initialize 
 def init_model(ctx): 
     """ "Initialize the model."""
     m = ctx.model
     m.fs.flash.initialize()
 
-@FS.step("set_solver") 
+@flowsheet.step.set_solver 
 def set_solver(ctx):
     """Set the solver."""
     ctx.solver = SolverFactory("ipopt")
 
-@FS.step("solve_optimization")
+@flowsheet.step.solve_optimization
 def solve_opt(ctx):
     ctx["results"] = ctx.solver.solve(ctx.model, tee=ctx["tee"])
 ```
 
 Details on the changes:
 
-* **7**: Import the FlowsheetRunner class.
-* **9**: Create a global {py:class}`FlowsheetRunner <structfs.fsrunner.FlowsheetRunner>` object, here called `FS`.
-* **11, 25, 37, 43, 48**: Add a `@FS.step()` decorator in front of each function
+* **7**: Import the StructuredFlowsheet class.
+* **9**: Create a global {py:class}`StructuredFlowsheet <structfs.fsrunner.StructuredFlowsheet>` object, here called `flowsheet`.
+* **11, 25, 37, 43, 48**: Add a `@flowsheet.step.step-name` decorator in front of each function
   with the name of the associated step.
 * **12, 26, 38, 44, 49**: Make each function take a single argument which is a {py:class}`fsrunner.Context <structfs.fsrunner.Context>` instance used to
   pass state information between functions (here, that argument is named `ctx`).
@@ -208,11 +208,11 @@ For example to run all the steps and get the status of the solve, you
 could do this:
 
 ```{code}
-FS.run_steps()
-assert FS.results.solver.status == SolverStatus.ok
+flowsheet.run()
+assert flowsheet.results.solver.status == SolverStatus.ok
 ```
 
-Some more examples of using the FlowsheetRunner are shown in the
+Some more examples of using the StructuredFlowsheet are shown in the
 example notebooks found under the `docs/examples/structfs` directory
 ([docs link](/examples/structfs/index)).
 
@@ -226,13 +226,14 @@ example notebooks found under the `docs/examples/structfs` directory
 You can also 'annotate' variables for special 
 treatment in display, etc. with the
 `annotate_var` function in the 
-{py:class}`FlowsheetRunner <structfs.fsrunner.FlowsheetRunner>` class.
+{py:class}`StructuredFlowsheet <structfs.fsrunner.StructuredFlowsheet>` class.
 
-```{autodoc2-object} structfs.fsrunner.FlowsheetRunner.annotate_var
+```{autodoc2-object} structfs.fsrunner.StructuredFlowsheet.annotate_var
 ```
 
-```{autodoc2-docstring} structfs.fsrunner.FlowsheetRunner.annotate_var
+```{autodoc2-docstring} structfs.fsrunner.StructuredFlowsheet.annotate_var
 :parser: myst
 ```
 
 '''
+from .fsrunner import StructuredFlowsheet

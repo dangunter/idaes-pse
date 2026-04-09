@@ -13,14 +13,14 @@
 import pytest
 from pyomo.environ import ConcreteModel
 from idaes.core import FlowsheetBlock
-from ..fsrunner import FlowsheetRunner, BaseFlowsheetRunner
+from ..fsrunner import StructuredFlowsheet, BaseStructuredFlowsheet
 from .flash_flowsheet import FS as flash_fs
 from idaes.core.util import structfs
 from idaes.core.util.doctesting import Docstring
 
 # -- setup --
 
-fsr = FlowsheetRunner()
+fsr = StructuredFlowsheet()
 
 
 @fsr.step("build")
@@ -148,7 +148,7 @@ def test_annotation():
 sfi_before_build_model = sfi_before_set_operating_conditions = sfi_before_init_model = (
     sfi_before_solve
 ) = lambda x: None
-SolverStatus, FS = None, None
+SolverStatus, flowsheet = None, None
 
 #  load the functions from the docstring
 _ds1 = Docstring(structfs.__doc__)
@@ -167,20 +167,20 @@ def test_sfi_before():
 
 @pytest.mark.unit
 def test_sfi_after():
-    FS.run_steps()
-    assert FS.results.solver.status == SolverStatus.ok
+    flowsheet.run_steps()
+    assert flowsheet.results.solver.status == SolverStatus.ok
 
 
 # pacify linters
 annotate_vars_example = lambda x: None
 # load example function from docstring
-_ds2 = Docstring(BaseFlowsheetRunner.annotate_var.__doc__)
+_ds2 = Docstring(BaseStructuredFlowsheet.annotate_var.__doc__)
 exec(_ds2.code("annotate_vars"))
 
 
 @pytest.mark.unit
 def test_ann_docs():
-    annotate_vars_example(fr := FlowsheetRunner())
+    annotate_vars_example(fr := StructuredFlowsheet())
     ex = fr.annotated_vars["example"]
     assert ex["fullname"] == "ScalarVar"
     assert ex["title"] == "Example variable"

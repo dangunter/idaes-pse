@@ -154,3 +154,54 @@ def test_runaction():
     simple.add_action("foo", RunActionExample)
     simple.run_steps()
     assert simple.get_action("foo").report() == {"example": True}
+
+
+@pytest.mark.unit
+def test_step_helper():
+    r = Runner(("step1", "step2"))
+
+    @r.step.step1
+    def step1_impl(context):
+        context["step1_run"] = True
+
+    @r.step.step2
+    def step2_impl(context):
+        context["step2_run"] = True
+
+    r.run()
+    assert r["step1_run"]
+    assert r["step2_run"]
+
+
+@pytest.mark.unit
+def test_step_helper_bad():
+    r = Runner(("step1", "step2"))
+
+    # unknown step
+    with pytest.raises(KeyError):
+
+        @r.step.step3
+        def step_impl(context):
+            return
+
+    # forgot to put step name after
+    try:
+
+        @r.step
+        def step_impl(context):
+            return
+
+    except TypeError as err:
+        # check that the special function info is in message
+        assert "You may have" in str(err)
+
+    # bad type for name
+    try:
+
+        @r.step(12)
+        def step_impl(context):
+            return
+
+    except TypeError as err:
+        # check that the special function info is NOT in message
+        assert "You may have" not in str(err)

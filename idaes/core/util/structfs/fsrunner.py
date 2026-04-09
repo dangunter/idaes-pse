@@ -12,7 +12,7 @@
 #################################################################################
 """
 Specialize the generic `Runner` class to running a flowsheet,
-in `FlowsheetRunner`.
+in `StructuredFlowsheet`.
 """
 
 # stdlib
@@ -34,7 +34,7 @@ from .runner import Runner
 
 class Context(dict):
     """Syntactic sugar for the dictionary for the 'context' passed into each
-    step of the `FlowsheetRunner` class.
+    step of the `StructuredFlowsheet` class.
     """
 
     @property
@@ -58,7 +58,7 @@ class Context(dict):
         self["solver"] = value
 
 
-class BaseFlowsheetRunner(Runner):
+class BaseStructuredFlowsheet(Runner):
     """Specialize the base `Runner` to handle IDAES flowsheets.
 
     This class pre-determine the name and order of steps to run
@@ -182,10 +182,10 @@ class BaseFlowsheetRunner(Runner):
 
         ```{code}
         :name: annotate_vars
-        from idaes.core.util.structfs.fsrunner import FlowsheetRunner
+        from idaes.core.util.structfs.fsrunner import StructuredFlowsheet
         from pyomo.environ import *
 
-        def example(f: FlowsheetRunner):
+        def example(f: StructuredFlowsheet):
             v = Var()
             v.construct()
             f.annotate_var(v, key="example", title="Example variable").fix(1)
@@ -195,7 +195,7 @@ class BaseFlowsheetRunner(Runner):
         property:
 
         ```{code}
-        example(fr := FlowsheetRunner())
+        example(fr := StructuredFlowsheet())
         print(fr.annotated_vars)
         # prints something like this:
         # {'example': {'var': <pyomo.core.base.var.ScalarVar object at 0x762ffb124b40>,
@@ -233,7 +233,7 @@ class BaseFlowsheetRunner(Runner):
         return self._ann.copy()
 
 
-class FlowsheetRunner(BaseFlowsheetRunner):
+class StructuredFlowsheet(BaseStructuredFlowsheet):
     """Interface for running and inspecting IDAES flowsheets."""
 
     class DegreesOfFreedom:
