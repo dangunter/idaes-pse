@@ -556,11 +556,11 @@ class StreamTable(Action):
         streams = {}
         for component in self._runner.model.component_objects(Arc, descend_into=True):
             streams[component.getname()] = component
-        
+
         # create stream table using existing utility function
         df = create_stream_table_ui(streams)
         dd = df.to_dict(orient="split")
-        
+
         # move units column to its own list
         dd["columns"] = dd["columns"][1:]  # delete first column of header
         dd["units"] = [str(r[0]) for r in dd["data"]]  # copy Units obj, convert to str
