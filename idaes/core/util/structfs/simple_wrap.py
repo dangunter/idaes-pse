@@ -10,15 +10,17 @@
 # All rights reserved.  Please see the files COPYRIGHT.md and LICENSE.md
 # for full copyright and license information.
 #################################################################################
+"""
+**this** is the documentation for the simple wrapper
+"""
 
 from .fsrunner import BaseFlowsheetRunner, RESULT_FLOWSHEET_KEY
 
 
-class FlowsheetRunnerWithMain(BaseFlowsheetRunner):
+class SimpleFlowsheetRunner(BaseFlowsheetRunner):
     """Rewrite FlowsheetRunner constructor to:
-    (a) skip timings,
-    (b) consider the build step a solve step, and
-    (c) have an attribute for the main() function
+    (a) consider the build step (also) a solve step, and
+    (b) have an attribute `main_func` for the main function
     """
 
     def __init__(self, *args, **kwargs):
@@ -28,41 +30,112 @@ class FlowsheetRunnerWithMain(BaseFlowsheetRunner):
             CaptureSolverOutput,
             ModelVariables,
             MermaidDiagram,
+            Timer,
         )
 
         super().__init__(*args, **kwargs)
         self.main_func = None
+        self.main_func_args = []
+        self.main_func_kwargs = {}
+        self.add_action("timings", Timer)
         self.add_action("degrees_of_freedom", UnitDofChecker, "fs", ["build"])
         self.add_action("capture_solver_output", CaptureSolverOutput, solve_re=r"build")
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
 
 
-"""
-Create an instance of FlowsheetRunnerWithMain and add a build
-step that simply calls the provided main function to build & solve the model.
-"""
-_FS = FlowsheetRunnerWithMain()
+# create an instance of FlowsheetRunnerWithMain
+_FS = SimpleFlowsheetRunner()
 
 
-@_FS.step("build")
-def _build(ctx):
-    model, solve_result = _FS.main_func()
-    ctx.model = model
-    ctx["results"] = solve_result
+class _Wrapper:
+    """
+    ### Usage
+
+    The functionality of the API is imported with the name `fi_main`
+    in the `idaes.core.util.structfs` package, so normal usage requires only a
+    single function, listed as `my_main_function()` in the example below
+    (some extra classes and functions are added so this can be a self-contained and
+    working example):
+    ```{code} python
+    :name: simplewrap
+
+    from idaes.core.util.structfs import fi_main
+
+    @fi_main
+    def my_main_function(some, args, keyword=None): # can take any arguments
+        # build the flowsheet -> model
+        model = build_flowsheet()
+        # initialize the flowsheet
+        # solve the flowsheet -> solve_result
+        solve_result = solve_flowsheet()
+
+        # **Important!**: return the model and solve result as a tuple
+        return model, solve_result
 
 
-def fi_main(main_fn):
-    """Decorator for function that returns the tuple (model, results)
-    after building and solving a model, so that it provides
-    information through the FlowsheetRunner API.
+    #------------------------------------------------------------------
+
+    # Some classes so the build/solve can nominally succeed
+
+    class FakeFlowsheet:
+        is_indexed = lambda x: False
+        def component_data_objects(self, *arg, **kw):
+            return []
+        def component_objects(self, *arg, **kw):
+            return []
+
+    class FakeModel:
+        fs = FakeFlowsheet()
+        def component_objects(self, *arg, **kw):
+            return []
+
+    # Fake build and solve functions
+
+    def build_flowsheet():
+        # Fake build of flowsheet
+        return FakeModel()
+
+    def solve_flowsheet():
+        # Fake solve of flowsheet
+        return {}
+
+    ```
+    So, in summary, the steps to enable your flowsheets are:
+
+    1. Create a function that returns the tuple `(model, solve_result)` after
+       building and solving the model.
+
+    2. Add the import statement `from idaes.core.util.structfs import fi_main` and
+       then decorate the function in (1) with  `@fi_main`
+
+    That's it! Now the Flowsheet Inspector can run your flowsheet and show the diagram,
+    model variables, degrees of freedom, diagnostics, etc.
     """
 
-    # note: don't change 'fi_wrapper' name
-    def fi_wrapper(*args, **kwargs):
-        _FS.main_func = main_fn
-        _FS.run_steps()
-        _FS.results[RESULT_FLOWSHEET_KEY] = _FS
-        return _FS.model, _FS.results
+    # add a build step that simply calls the provided main function
+    # to build & solve the model.
+    @_FS.step("build")
+    def _build(ctx):
+        model, solve_result = _FS.main_func(*_FS.main_func_args, **_FS.main_func_kwargs)
+        ctx.model = model
+        ctx["results"] = solve_result
 
-    return fi_wrapper
+    @classmethod
+    def main(cls, main_fn):
+        """Decorator for function that returns the tuple (model, results)
+        after building and solving a model, so that it provides
+        information through the FlowsheetRunner API.
+        """
+
+        # note: don't change 'fi_wrapper' name, since this
+        # is used for auto-detection of the method in user's code
+        def fi_wrapper(*args, **kwargs):
+            _FS.main_func = main_fn
+            _FS.main_func_args = args
+            _FS.main_func_kwargs = kwargs
+            _FS.run_steps()
+            _FS.results[RESULT_FLOWSHEET_KEY] = _FS
+            return _FS.model, _FS.results
+
+        return fi_wrapper

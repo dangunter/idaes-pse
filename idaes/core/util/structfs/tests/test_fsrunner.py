@@ -193,6 +193,11 @@ def test_ann_docs():
     assert ex["title"] == "Example variable"
 
 
+#####
+# Test utilities to find wrapped functions
+#####
+
+
 @pytest.mark.unit
 def test_find_wrapped():
     from . import test_simple_wrap
@@ -206,7 +211,7 @@ def test_run_wrapped():
     from . import test_simple_wrap
     from pprint import pprint
 
-    wmain = wrapped_main(test_simple_wrap)
+    wmain = test_simple_wrap.my_main
     report = run_wrapped_main(wmain)
     assert report
     assert "actions" in report
@@ -216,7 +221,17 @@ def test_run_wrapped():
         "model_variables",
         "capture_solver_output",
         "mermaid_diagram",
+        "timings",
     ):
         assert k in actions
         print(f"action={k}")
         pprint(actions[k])
+
+
+@pytest.mark.unit
+def test_wrapped_main():
+    from . import test_simple_wrap
+
+    # with the doctest in that module, there are
+    # actually 2 wrapped mains. Either will do.
+    wmain = wrapped_main(test_simple_wrap)

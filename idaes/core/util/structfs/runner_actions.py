@@ -388,7 +388,6 @@ class CaptureSolverOutput(Action):
     def before_step(self, step_name: str):
         """Action performed before the step."""
         if self._is_solve_step(step_name):
-            print("@@ solve step before")
             self._solver_out = StringIO()
             self._save_stdout, sys.stdout = sys.stdout, self._solver_out
 
@@ -398,7 +397,6 @@ class CaptureSolverOutput(Action):
             self._logs[step_name] = self._solver_out.getvalue()
             self._solver_out = None
             sys.stdout = self._save_stdout
-            print("@@ solve step after")
 
     def _is_solve_step(self, name: str) -> bool:
         return re.match(self._solve_re, name) is not None

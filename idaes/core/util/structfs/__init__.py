@@ -11,7 +11,22 @@
 # for full copyright and license information.
 #################################################################################
 '''
-# Structured flowsheet runner API
+# Structured flowsheet runner 
+
+## Simple wrapper API
+
+The structured flowsheet "simple wrapper" API allows existing flowsheet
+scripts to be integrated into the Flowsheet Inspector with the addition
+of an import and a single decorated `main()` function, which may already exist.
+
+
+```{autodoc2-docstring} structfs.simple_wrap._Wrapper
+```
+
+The rest of this section provides details on the more complex, but more
+flexible, class-based API.
+
+## Class-based API
 
 The *struct*ured *f*low*s*heet runner is an API in the
 {py:mod}`structfs` subpackage, and in
@@ -237,4 +252,6 @@ treatment in display, etc. with the
 
 '''
 
-from .simple_wrap import fi_main
+from .simple_wrap import _Wrapper
+
+fi_main = _Wrapper.main
