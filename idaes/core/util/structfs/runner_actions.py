@@ -38,7 +38,7 @@ except ImportError:
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.core.base.unit_model import ProcessBlockData
 from .runner import Action
-from .fsrunner import FlowsheetRunner
+from .fsrunner import BaseFlowsheetRunner, FlowsheetRunner
 
 
 class Timer(Action):
@@ -373,14 +373,22 @@ class UnitDofChecker(Action):
 class CaptureSolverOutput(Action):
     """Capture the solver output."""
 
-    def __init__(self, runner, **kwargs):
+    def __init__(self, runner, solve_re=r"solve.*", **kwargs):
+        """Constructor
+
+        Args:
+            runner: FlowsheetRunner object
+            solve_re: Regular expression to detect solver step. Defaults to r".*solve".
+        """
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
+        self._solve_re = solve_re
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
         if self._is_solve_step(step_name):
+            print("@@ solve step before")
             self._solver_out = StringIO()
             self._save_stdout, sys.stdout = sys.stdout, self._solver_out
 
@@ -390,9 +398,10 @@ class CaptureSolverOutput(Action):
             self._logs[step_name] = self._solver_out.getvalue()
             self._solver_out = None
             sys.stdout = self._save_stdout
+            print("@@ solve step after")
 
-    def _is_solve_step(self, name: str):
-        return name.startswith("solve")
+    def _is_solve_step(self, name: str) -> bool:
+        return re.match(self._solve_re, name) is not None
 
     def report(self) -> dict:
         """Machine-readable report with solver output.
@@ -415,7 +424,7 @@ class ModelVariables(Action):
         variables: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
-        assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
+        assert isinstance(runner, BaseFlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
 
     def after_run(self):

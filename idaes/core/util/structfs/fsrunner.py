@@ -16,6 +16,8 @@ in `FlowsheetRunner`.
 """
 
 # stdlib
+from types import FunctionType
+from typing import Sequence
 
 # third-party
 from pyomo.environ import ConcreteModel
@@ -30,6 +32,10 @@ except ImportError:
 
 # package
 from .runner import Runner
+
+# Constants
+#: Special key used to embed a flowsheet runner instance in a result dict
+RESULT_FLOWSHEET_KEY = "__fi"
 
 
 class Context(dict):
@@ -81,11 +87,13 @@ class BaseFlowsheetRunner(Runner):
         "check_model_numerics",
     )
 
-    def __init__(self, solver=None, tee=True):
-        self.build_step = self.STEPS[0]
+    def __init__(self, solver=None, tee=True, steps: Sequence[str] = None):
+        if steps is None:
+            steps = self.STEPS
+        self.build_step = steps[0]
         self._solver, self._tee = solver, tee
         self._ann = {}
-        super().__init__(self.STEPS)  # needs to be last
+        super().__init__(steps)  # needs to be last
 
     def run_steps(
         self,
@@ -324,3 +332,44 @@ class FlowsheetRunner(BaseFlowsheetRunner):
             return display_connectivity(input_model=self.model)
         else:
             return ""
+
+
+## Utility code to find modules
+
+
+def global_flowsheet(a_module):
+    """Find the global flowhseet object
+
+    Return:
+        The flowsheet object, or None if not found.
+    """
+    return getattr(a_module, "FS", None)
+
+
+def wrapped_main(a_module) -> FunctionType | None:
+    """Find a wrapped flowsheet main function.
+
+    Returns:
+       The wrapped function, or None if not found
+    """
+    if not hasattr(a_module, "fi_main"):
+        return None
+    found = None
+    for k in dir(a_module):
+        fn = getattr(a_module, k)
+        if isinstance(fn, FunctionType):
+            name = fn.__name__
+            if name == "fi_wrapper":
+                found = k
+                break
+    if found:
+        return getattr(a_module, found)
+    return None
+
+
+def run_wrapped_main(func) -> dict[str, dict]:
+    """Run a wrapped flowsheet returned by `wrapped_flowsheet()`
+    and return the report from the embedded runner object.
+    """
+    m, result = func()
+    return result[RESULT_FLOWSHEET_KEY].report()

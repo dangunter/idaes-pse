@@ -13,7 +13,14 @@
 import pytest
 from pyomo.environ import ConcreteModel
 from idaes.core import FlowsheetBlock
-from ..fsrunner import FlowsheetRunner, BaseFlowsheetRunner
+from ..fsrunner import (
+    FlowsheetRunner,
+    BaseFlowsheetRunner,
+    global_flowsheet,
+    wrapped_main,
+    run_wrapped_main,
+)
+
 from .flash_flowsheet import FS as flash_fs
 from idaes.core.util import structfs
 from idaes.core.util.doctesting import Docstring
@@ -184,3 +191,32 @@ def test_ann_docs():
     ex = fr.annotated_vars["example"]
     assert ex["fullname"] == "ScalarVar"
     assert ex["title"] == "Example variable"
+
+
+@pytest.mark.unit
+def test_find_wrapped():
+    from . import test_simple_wrap
+
+    assert global_flowsheet(test_simple_wrap) is None
+    assert wrapped_main(test_simple_wrap)
+
+
+@pytest.mark.integration
+def test_run_wrapped():
+    from . import test_simple_wrap
+    from pprint import pprint
+
+    wmain = wrapped_main(test_simple_wrap)
+    report = run_wrapped_main(wmain)
+    assert report
+    assert "actions" in report
+    actions = report["actions"]
+    for k in (
+        "degrees_of_freedom",
+        "model_variables",
+        "capture_solver_output",
+        "mermaid_diagram",
+    ):
+        assert k in actions
+        print(f"action={k}")
+        pprint(actions[k])

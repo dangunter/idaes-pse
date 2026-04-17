@@ -236,3 +236,5 @@ treatment in display, etc. with the
 ```
 
 '''
+
+from .simple_wrap import fi_main
