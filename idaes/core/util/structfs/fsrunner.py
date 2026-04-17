@@ -371,5 +371,5 @@ def run_wrapped_main(func) -> dict[str, dict]:
     """Run a wrapped flowsheet returned by `wrapped_flowsheet()`
     and return the report from the embedded runner object.
     """
-    m, result = func()
+    m, result = func()  # pylint: disable=W0612
     return result[RESULT_FLOWSHEET_KEY].report()

@@ -119,7 +119,7 @@ class _Wrapper:
     def _build(ctx):
         model, solve_result = _FS.main_func(*_FS.main_func_args, **_FS.main_func_kwargs)
         ctx.model = model
-        ctx["results"] = solve_result
+        ctx["results"] = solve_result  # pylint: disable=E1137
 
     @classmethod
     def main(cls, main_fn):
