@@ -16,11 +16,18 @@ Run functions in a module in a defined, named, sequence.
 
 # stdlib
 from abc import ABC, abstractmethod
+import inspect
 import logging
+import os
+from pathlib import Path
 from typing import Callable, Optional, Tuple, Sequence, TypeVar
 
 # third party
 from pydantic import BaseModel
+
+# package
+from .reportdb import ReportDB
+from idaes.config import get_data_directory
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -63,7 +70,7 @@ class Runner:
 
     STEP_ANY = "-"
 
-    def __init__(self, steps: Sequence[str]):
+    def __init__(self, steps: Sequence[str], report_db: ReportDB = None):
         """Constructor.
 
         Args:
@@ -74,6 +81,36 @@ class Runner:
         self._step_names = list(steps)
         self._steps: dict[str, Step] = {}
         self.reset()
+        self._report_db = report_db or self._get_default_report_db()
+        self._setup_report_db()
+
+    def _get_default_report_db(self):
+
+        # get IDAES home directory
+        data_dir, _, _ = get_data_directory()
+        data_path = Path(data_dir)
+
+        # set reportdb to be a file in that directory
+        report_db_path = data_path / "reportdb.sqlite"
+
+        # set `db` to a new ReportDB instance
+        if report_db_path.exists():
+            # if it exists, just open it
+            db = ReportDB(report_db_path)
+        else:
+            # if it doesn't exist, create tables
+            db = ReportDB(report_db_path)
+            db.create()
+
+        return db
+
+    def _setup_report_db(self):
+        # set module, filename for reports
+        first_step = self._steps[self._step_names[0]]
+        func = first_step.func
+        module_name = inspect.getmodule(func).__name__
+        file_name = os.path.abspath(inspect.getfile(func))
+        self._report_db.set_target(module=module_name, filename=file_name)
 
     def __getitem__(self, key):
         """Look for key in `context`"""
@@ -133,7 +170,12 @@ class Runner:
         self.run_steps(first=name, last=name)
 
     def run_steps(
-        self, first: str = "", last: str = "", after: str = "", before: str = ""
+        self,
+        first: str = "",
+        last: str = "",
+        after: str = "",
+        before: str = "",
+        save_report=True,
     ):
         """Run steps from `first`/`after` to step `last`/`before`.
 
@@ -146,6 +188,7 @@ class Runner:
             after: Run first defined step after this one (exclude)
             last: Last step to run (include)
             before: Run last defined step before this one (exclude)
+            save_report: If true save report in report database, if False don't do this
 
         Raises:
             KeyError: Unknown or undefined step given
@@ -162,7 +205,9 @@ class Runner:
             last or before,
             (bool(first) or not bool(after), bool(last) or not bool(before)),
         )
-        return self._run_steps(*args)
+        self._run_steps(*args)
+        if save_report:
+            self._save_report()
 
     def _run_steps(
         self,
@@ -217,6 +262,10 @@ class Runner:
         # execute overall after-run action
         for action in self._actions.values():
             action.after_run()
+
+    def _save_report(self):
+        rpt = self.report()
+        self._report_db.add_report(rpt)
 
     def reset(self):
         """Reset runner internal state, especially the context."""
