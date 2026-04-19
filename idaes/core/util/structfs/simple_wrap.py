@@ -58,7 +58,7 @@ class _Wrapper:
     (some extra classes and functions are added so this can be a self-contained and
     working example):
     ```{code} python
-    :name: simplewrap
+    :caption: Simple Wrapper Usage
 
     from idaes.core.util.structfs import fi_main
 

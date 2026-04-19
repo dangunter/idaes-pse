@@ -112,7 +112,7 @@ def solve_flowsheet():
 
 #  load the functions from the docstring
 _ds1 = Docstring(_Wrapper.__doc__)
-exec(_ds1.code("simplewrap", func_prefix="fi_wrap_"))
+exec(_ds1.code("simple-wrapper-usage", func_prefix="fi_wrap_"))
 
 
 @pytest.mark.unit
