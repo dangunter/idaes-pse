@@ -994,6 +994,16 @@ class CustomScalerBase(ScalerBase):
         Returns:
             None
         """
+        # Top-level import creates circular import
+        # pylint: disable=import-outside-toplevel
+        from idaes.core.base.property_base import StateBlock, StateBlockData
+        from idaes.core.base.reaction_base import (
+            ReactionBlockBase,
+            ReactionBlockDataBase,
+        )
+
+        # pylint: enable=import-outside-toplevel
+
         if submodel_scalers is None:
             submodel_scalers = {}
 
@@ -1007,21 +1017,36 @@ class CustomScalerBase(ScalerBase):
                     scaler = scaler(**self.config)
                 _log.debug(f"Using user-defined Scaler for {submodel}.")
             else:
-                try:
-                    scaler = smdata.default_scaler
-                    _log.debug(f"Using default Scaler for {submodel}.")
-                except AttributeError:
-                    _log.debug(
-                        f"No default Scaler set for {submodel}. Cannot call {method}."
-                    )
-                    # TODO Is it possible for one index to have a scaler and another
-                    # not without user insanity?
-                    return
-                if scaler is not None:
-                    scaler = scaler(**self.config)
+                if isinstance(
+                    smdata,
+                    (
+                        StateBlockData,
+                        StateBlock,
+                    ),
+                ) and hasattr(smdata.params, "default_state_scaler_object"):
+                    scaler = smdata.params.default_state_scaler_object
+                elif isinstance(
+                    smdata,
+                    (
+                        ReactionBlockDataBase,
+                        ReactionBlockBase,
+                    ),
+                ) and hasattr(smdata.params, "default_reaction_scaler_object"):
+                    scaler = smdata.params.default_reaction_scaler_object
                 else:
-                    # TODO Why not return here but return above?
+                    try:
+                        scaler = smdata.default_scaler
+                        _log.debug(f"Using default Scaler for {submodel}.")
+                    except AttributeError:
+                        _log.debug(
+                            f"No default Scaler set for {submodel}. Cannot call {method}."
+                        )
+                        return
+                if scaler is None:
                     _log.debug(f"No Scaler found for {submodel}. Cannot call {method}.")
+                elif callable(scaler):
+                    scaler = scaler(**self.config)
+                # else we have already have a scaler object
 
             # If a Scaler is found, call desired method
             if scaler is not None:
