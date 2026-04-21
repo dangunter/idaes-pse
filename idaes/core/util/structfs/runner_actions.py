@@ -559,7 +559,7 @@ class StreamTable(Action):
         data: list[list[tuple[float, str]]]
 
     def __init__(self, runner, **kwargs):
-        assert isinstance(runner, FlowsheetRunner)  # makes no sense otherwise
+        assert isinstance(runner, BaseFlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
         self._stream_table = {}
 
