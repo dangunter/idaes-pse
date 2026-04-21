@@ -16,8 +16,8 @@ import time
 import pytest
 from pytest import approx
 from .. import runner
-from ..runner_actions import Timer, UnitDofChecker, MermaidDiagram
-from . import flash_flowsheet
+from ..runner_actions import Timer, UnitDofChecker, MermaidDiagram, StreamTable
+from . import flash_flowsheet, hda_flowsheet
 
 
 @pytest.mark.unit
@@ -205,3 +205,32 @@ def test_mermaid_report():
     else:
         print("Connectivity IS installed")
         assert report.diagram != {}
+
+
+@pytest.mark.unit
+def test_stream_table_action_create():
+    obj = StreamTable(flash_flowsheet.FS)
+    assert obj
+
+
+@pytest.mark.unit
+def test_stream_table_action_report():
+    rn = hda_flowsheet.FS  # need a flowsheet with Arcs
+    rn.reset()
+    rn._actions = {}  # no other actions
+    rn.add_action("streamtable", StreamTable)
+    rn.build()  # don't need to solve
+    report = rn.get_action("streamtable").report()
+    print(f"report: {report}")
+    # perform some basic checks on the contents
+    assert report
+    assert report.index[0].startswith("flow_mol")
+    assert report.units[0] == "mole / second"
+    assert "s03" in report.columns
+    assert len(report.columns) == len(report.data[0])
+    assert len(report.data) == len(report.index)
+    v1 = report.data[0][0]
+    assert len(v1) == 2
+    assert v1[0] > 0
+    assert v1[0] < 1
+    assert v1[1] == "unfixed"
