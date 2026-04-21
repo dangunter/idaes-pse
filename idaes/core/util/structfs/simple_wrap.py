@@ -13,7 +13,11 @@
 """
 **this** is the documentation for the simple wrapper
 """
+# stdlib
+import inspect
+import os
 
+# package
 from .fsrunner import BaseFlowsheetRunner, RESULT_FLOWSHEET_KEY
 
 
@@ -122,7 +126,7 @@ class _Wrapper:
         ctx["results"] = solve_result  # pylint: disable=E1137
 
     @classmethod
-    def main(cls, name: str | None = None):
+    def main(cls, **main_kw):
         """Decorator *factory* for function that returns the tuple (model, results)
         after building and solving a model, so that it provides
         information through the FlowsheetRunner API.
@@ -132,14 +136,17 @@ class _Wrapper:
             # note: don't change 'fi_wrapper' name, since this
             # is used for auto-detection of the method in user's code
             def fi_wrapper(*args, **kwargs):
+                if "module" not in main_kw:
+                    main_kw["module"] = inspect.getmodule(main_fn).__name__
+                if "filename" not in main_kw:
+                    main_kw["filename"] = os.path.abspath(inspect.getfile(main_fn))
                 _FS.main_func = main_fn
                 _FS.main_func_args = args
                 _FS.main_func_kwargs = kwargs
-                if name:
-                    _FS.name = name
-
+                _FS.set_report_target(**main_kw)
+                # run the flowsheet
                 _FS.run_steps()
-
+                # stash object in result dict under 'special' key
                 _FS.results[RESULT_FLOWSHEET_KEY] = _FS
                 return _FS.model, _FS.results
 

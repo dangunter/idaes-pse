@@ -51,7 +51,7 @@ class ReportDB:
     COLUMNS = tuple(
         [
             ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
-            ("created", "INTEGER"),
+            ("created", "REAL"),
             ("target_hash", "TEXT"),
             ("tags", "TEXT"),
             ("report", "BLOB"),
@@ -137,7 +137,7 @@ class ReportDB:
         _log.debug(f"Add a report, target={target_kw}")
         with self._connect() as conn:
             # set non-user column values
-            created = int(time.time())
+            created = time.time()
             if hash_ is None:
                 hash_ = ""
             insert_cols = self._all_columns(exclude=("id",))
@@ -233,14 +233,10 @@ class ReportDB:
                 report blob.
             json.JSONDecodeError: If the stored payload is not valid JSON.
         """
-        # Extract 'tags' from kwargs, or set to None.
+        # Extract 'tags' from kwargs (may be None)
         # (Don't put tags=None in function signature, otherwise it
         # will confusingly be a positional argument as well)
-        if "tags" in kwargs:
-            tags = kwargs["tags"]
-            del kwargs["tags"]
-        else:
-            tags = None
+        tags = kwargs.pop("tags", None)
 
         # connect to db
         with self._connect() as conn:

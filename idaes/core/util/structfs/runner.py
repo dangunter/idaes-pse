@@ -82,16 +82,8 @@ class Runner:
         self._steps: dict[str, Step] = {}
         self._child_func: dict[str, Callable] = {}
         self.reset()
+        self._tags = ""  # for reporting
         self._report_db = report_db or self._get_default_report_db(create=True)
-        self._name: str = ""
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @name.setter
-    def name(self, value: str):
-        self._name = value
 
     @classmethod
     def get_report_db(cls):
@@ -119,24 +111,6 @@ class Runner:
             db.create()
 
         return db
-
-    def _setup_report_db(self):
-        # set module, filename for reports
-        if hasattr(self, "main_func"):
-            # simple-wrapper mode (main_func)
-            func = getattr(self, "main_func")
-        else:
-            # this is hopefully not just a wrapper
-            func = self._child_func[self._step_names[0]]
-        module_name = inspect.getmodule(func).__name__
-        file_name = os.path.abspath(inspect.getfile(func))
-        _log.debug(
-            "Set reporting target: "
-            + f"name={self._name}, module={module_name}, filename={file_name}"
-        )
-        self._report_db.set_target(
-            name=self._name, module=module_name, filename=file_name
-        )
 
     def __getitem__(self, key):
         """Look for key in `context`"""
@@ -235,9 +209,6 @@ class Runner:
         )
         self._run_steps(*args)
         if save_report:
-            # finish setting up context for this flowsheet
-            self._setup_report_db()
-            # save the report
             self._save_report()
 
     def _run_steps(
@@ -296,7 +267,17 @@ class Runner:
 
     def _save_report(self):
         rpt = self.report()
-        self._report_db.add_report(rpt)
+        _log.debug("Adding report to DB")
+        self._report_db.add_report(rpt, tags=self._tags)
+
+    def set_report_target(self, **target_kw):
+        """Set target for report generation.
+
+        See reportdb.TARGET_COLUMNS for possible keys, also allow 'tags'.
+        """
+        self._tags = target_kw.pop("tags", "")  # I'm gonna pop some tags..
+        _log.debug(f"Set report target to: {target_kw}")
+        self._report_db.set_target(**target_kw)
 
     def reset(self):
         """Reset runner internal state, especially the context."""
