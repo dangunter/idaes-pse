@@ -16,9 +16,7 @@ Run functions in a module in a defined, named, sequence.
 
 # stdlib
 from abc import ABC, abstractmethod
-import inspect
 import logging
-import os
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Sequence, TypeVar
 
@@ -26,8 +24,8 @@ from typing import Callable, Optional, Tuple, Sequence, TypeVar
 from pydantic import BaseModel
 
 # package
-from .reportdb import ReportDB
 from idaes.config import get_data_directory
+from .reportdb import ReportDB
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -62,7 +60,7 @@ class Step:
 
 
 # Python 3.9-compatible forward reference
-ActionType = TypeVar("ActionType", bound="Action")
+ActionType = TypeVar("ActionType", bound="Action")  # pylint: disable=C0103
 
 
 class Runner:

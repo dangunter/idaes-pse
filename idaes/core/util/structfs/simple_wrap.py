@@ -13,6 +13,7 @@
 """
 **this** is the documentation for the simple wrapper
 """
+
 # stdlib
 import inspect
 import os
@@ -35,6 +36,7 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
             ModelVariables,
             MermaidDiagram,
             Timer,
+            StreamTable,
         )
 
         super().__init__(*args, **kwargs)
@@ -46,6 +48,7 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
         self.add_action("capture_solver_output", CaptureSolverOutput, solve_re=r"build")
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
+        self.add_action("stream_table", StreamTable)
 
 
 # create an instance of FlowsheetRunnerWithMain

@@ -309,6 +309,7 @@ class FlowsheetRunner(BaseFlowsheetRunner):
             CaptureSolverOutput,
             ModelVariables,
             MermaidDiagram,
+            StreamTable,
         )
 
         super().__init__(**kwargs)
@@ -317,6 +318,7 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         self.add_action("capture_solver_output", CaptureSolverOutput)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
+        self.add_action("stream_table", StreamTable)
 
     def build(self):
         """Run just the build step"""
