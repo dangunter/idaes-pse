@@ -253,5 +253,10 @@ treatment in display, etc. with the
 '''
 
 from .simple_wrap import _Wrapper
+from .runner import Runner
 
+#: Flowsheet inspector simple wrapper
 fi_main = _Wrapper.main
+
+#: Get the default ReportDB database (wrapper) for reports
+get_report_db = Runner.get_report_db

@@ -450,12 +450,25 @@ class ModelVariables(Action):
             for index in c:
                 v = c[index]
                 indexed = index is not None
+
+                # get value, allowing for uninitialized
+                # values (set them as None)
+                if isinstance(v, float) or isinstance(v, int):
+                    v_value = v
+                elif not v.is_fixed() and v.stale:
+                    # avoid errors from uninitialized vars
+                    v_value = None
+                else:
+                    try:
+                        v_value = pyo.value(v)
+                    except ValueError:
+                        v_value = None
                 if subtype == self.VAR_TYPE:
                     # index, value, is-fixed, is-stale, lower-bound, upper-bound
-                    item = (index, pyo.value(v), v.fixed, v.stale, v.lb, v.ub)
+                    item = (index, v_value, v.fixed, v.stale, v.lb, v.ub)
                 else:
                     # index, value
-                    item = (index, pyo.value(v))
+                    item = (index, v_value)
                 items.append(item)
             b.append(indexed)
             b.append(items)

@@ -80,11 +80,25 @@ class Runner:
         self._actions: dict[str, ActionType] = {}
         self._step_names = list(steps)
         self._steps: dict[str, Step] = {}
+        self._child_func: dict[str, Callable] = {}
         self.reset()
-        self._report_db = report_db or self._get_default_report_db()
-        self._setup_report_db()
+        self._report_db = report_db or self._get_default_report_db(create=True)
+        self._name: str = ""
 
-    def _get_default_report_db(self):
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @name.setter
+    def name(self, value: str):
+        self._name = value
+
+    @classmethod
+    def get_report_db(cls):
+        return cls._get_default_report_db(create=False)
+
+    @staticmethod
+    def _get_default_report_db(create=False):
 
         # get IDAES home directory
         data_dir, _, _ = get_data_directory()
@@ -97,6 +111,8 @@ class Runner:
         if report_db_path.exists():
             # if it exists, just open it
             db = ReportDB(report_db_path)
+        elif not create:
+            raise ValueError(f"Report database not found at path: {report_db_path}")
         else:
             # if it doesn't exist, create tables
             db = ReportDB(report_db_path)
@@ -106,17 +122,27 @@ class Runner:
 
     def _setup_report_db(self):
         # set module, filename for reports
-        first_step = self._steps[self._step_names[0]]
-        func = first_step.func
+        if hasattr(self, "main_func"):
+            # simple-wrapper mode (main_func)
+            func = getattr(self, "main_func")
+        else:
+            # this is hopefully not just a wrapper
+            func = self._child_func[self._step_names[0]]
         module_name = inspect.getmodule(func).__name__
         file_name = os.path.abspath(inspect.getfile(func))
-        self._report_db.set_target(module=module_name, filename=file_name)
+        _log.debug(
+            "Set reporting target: "
+            + f"name={self._name}, module={module_name}, filename={file_name}"
+        )
+        self._report_db.set_target(
+            name=self._name, module=module_name, filename=file_name
+        )
 
     def __getitem__(self, key):
         """Look for key in `context`"""
         return self._context[key]
 
-    def add_step(self, name: str, func: Callable):
+    def add_step(self, name: str, func: Callable, child_func: Callable = None):
         """Add a step.
 
         Steps are executed by calling `func(context)`,
@@ -126,6 +152,7 @@ class Runner:
         Args:
             name: Add a step to be executed
             func: Function to execute for the step.
+            child_func: The 'real' function called to do the work
 
         Raises:
             KeyError: _description_
@@ -135,6 +162,7 @@ class Runner:
         if step_name not in self._step_names:
             raise KeyError(f"Unknown step: {step_name}")
         self._steps[step_name] = Step(step_name, func)
+        self._child_func[step_name] = child_func
 
     def add_substep(self, base_name, name, func):
         """Add a substep for a given step.
@@ -207,6 +235,9 @@ class Runner:
         )
         self._run_steps(*args)
         if save_report:
+            # finish setting up context for this flowsheet
+            self._setup_report_db()
+            # save the report
             self._save_report()
 
     def _run_steps(
@@ -373,7 +404,7 @@ class Runner:
                 self._step_end(name)
                 return result
 
-            self.add_step(name, wrapper)
+            self.add_step(name, wrapper, child_func=func)
 
             return wrapper
 

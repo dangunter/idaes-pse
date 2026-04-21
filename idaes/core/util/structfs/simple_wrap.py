@@ -122,20 +122,27 @@ class _Wrapper:
         ctx["results"] = solve_result  # pylint: disable=E1137
 
     @classmethod
-    def main(cls, main_fn):
-        """Decorator for function that returns the tuple (model, results)
+    def main(cls, name: str | None = None):
+        """Decorator *factory* for function that returns the tuple (model, results)
         after building and solving a model, so that it provides
         information through the FlowsheetRunner API.
         """
 
-        # note: don't change 'fi_wrapper' name, since this
-        # is used for auto-detection of the method in user's code
-        def fi_wrapper(*args, **kwargs):
-            _FS.main_func = main_fn
-            _FS.main_func_args = args
-            _FS.main_func_kwargs = kwargs
-            _FS.run_steps()
-            _FS.results[RESULT_FLOWSHEET_KEY] = _FS
-            return _FS.model, _FS.results
+        def fi_wrapper_factory(main_fn):
+            # note: don't change 'fi_wrapper' name, since this
+            # is used for auto-detection of the method in user's code
+            def fi_wrapper(*args, **kwargs):
+                _FS.main_func = main_fn
+                _FS.main_func_args = args
+                _FS.main_func_kwargs = kwargs
+                if name:
+                    _FS.name = name
 
-        return fi_wrapper
+                _FS.run_steps()
+
+                _FS.results[RESULT_FLOWSHEET_KEY] = _FS
+                return _FS.model, _FS.results
+
+            return fi_wrapper
+
+        return fi_wrapper_factory
