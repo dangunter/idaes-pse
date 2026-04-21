@@ -60,7 +60,7 @@ def initialize(m):
 ### end basic Flash flowsheet code
 
 
-@fi_main
+@fi_main()
 def my_main():
     """Create and solve Flash flowsheet"""
 

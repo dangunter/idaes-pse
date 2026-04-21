@@ -66,7 +66,7 @@ class _Wrapper:
 
     from idaes.core.util.structfs import fi_main
 
-    @fi_main
+    @fi_main()
     def my_main_function(some, args, keyword=None): # can take any arguments
         # build the flowsheet -> model
         model = build_flowsheet()
