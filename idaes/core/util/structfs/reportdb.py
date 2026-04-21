@@ -160,8 +160,9 @@ class ReportDB:
             ph = ",".join("?" * len(insert_cols))
             # execute the insert
             cur = conn.cursor()
+            insert_cols_str = ", ".join(insert_cols)
             cur.execute(
-                f"INSERT INTO {self.TABLE} ({", ".join(insert_cols)}) VALUES ({ph})",
+                f"INSERT INTO {self.TABLE} ({insert_cols_str}) VALUES ({ph})",
                 colvalues,
             )
             # cleanup
