@@ -91,6 +91,9 @@ def main():
         # run the flowsheet and collect results
         to_step = args.to
         try:
+            if hasattr(obj, "set_report_target"):
+                obj.set_report_target(filename=module_name, name=module_name, module=module_name)
+                
             obj.run_steps(first=Runner.STEP_ANY, last=to_step)
         except Exception as e:  # pylint: disable=broad-exception-caught
             return _error(ofile, f"While running steps: {e}", 5)
