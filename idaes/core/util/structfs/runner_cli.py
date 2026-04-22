@@ -92,7 +92,10 @@ def main():
         to_step = args.to
         try:
             if hasattr(obj, "set_report_target"):
-                obj.set_report_target(filename=module_name, name=module_name, module=module_name)
+                # Always pass filename and module to backend, but leave 'name' out
+                # so that if the user explicitly defined a custom 'name' inside their flowsheet py file,
+                # we don't accidentally overwrite it here in the CLI runner!
+                obj.set_report_target(filename=module_name, module=module_name)
                 
             obj.run_steps(first=Runner.STEP_ANY, last=to_step)
         except Exception as e:  # pylint: disable=broad-exception-caught
