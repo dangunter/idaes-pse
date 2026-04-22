@@ -673,6 +673,7 @@ class ModelVariables(Action):
         self._vars = var_tree
         self._ports = port_aliases
 
+    @staticmethod
     def _safe_scalar_value(v):
         """Get value, allowing for uninitialized values.
         An uninitialized value will return None.

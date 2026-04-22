@@ -125,11 +125,18 @@ class BaseFlowsheetRunner(Runner):
         "solve_optimization",
     )
 
-    def __init__(self, solver=None, tee=True, steps: Sequence[str] = None):
+    def __init__(
+        self,
+        solver=None,
+        tee=True,
+        solver_options: dict | None = None,
+        steps: Sequence[str] = None,
+    ):
         if steps is None:
             steps = self.STEPS
         self.build_step = steps[0]
         self._solver, self._tee = solver, tee
+        self._solver_options = solver_options or {}
         self._ann = {}
         super().__init__(steps)  # needs to be last
 

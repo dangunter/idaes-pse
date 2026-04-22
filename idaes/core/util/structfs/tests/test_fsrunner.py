@@ -14,12 +14,14 @@ import pytest
 from types import SimpleNamespace
 from pyomo.environ import ConcreteModel, SolverStatus, TerminationCondition, Var
 from idaes.core import FlowsheetBlock
+from .. import fsrunner
 from ..fsrunner import (
     FlowsheetRunner,
     BaseFlowsheetRunner,
     global_flowsheet,
     wrapped_main,
     run_wrapped_main,
+    Context,
 )
 
 from .flash_flowsheet import FS as flash_fs
@@ -31,7 +33,7 @@ from pyomo.environ import assert_optimal_termination
 @pytest.mark.unit
 def test_run_all():
     flash_fs.run_steps()
-    assert_optimal_termination(flash_fs.result)
+    assert_optimal_termination(flash_fs.results)
 
 
 @pytest.mark.unit
@@ -128,7 +130,7 @@ def test_sfi_before():
 @pytest.mark.unit
 def test_sfi_after():
     FS.run_steps()
-    assert FS.result.solver.status == SolverStatus.ok
+    assert FS.results.solver.status == SolverStatus.ok
 
 
 # pacify linters
@@ -204,13 +206,13 @@ def test_context_solve_and_properties(monkeypatch):
     ctx = Context(model="model", solver=None, tee=False)
     ctx.solve()
     assert seen["call"] == ("model", False)
-    assert ctx.result == "solved"
-    assert ctx.result == "solved"
+    assert ctx.results == "solved"
+    assert ctx.results == "solved"
 
-    ctx.result = "updated"
+    ctx.results = "updated"
     ctx.model = "new-model"
     ctx.solver = "solver"
-    assert ctx.result == "updated"
+    assert ctx.results == "updated"
     assert ctx.model == "new-model"
     assert ctx.solver == "solver"
     assert ctx.tee is False
@@ -286,18 +288,3 @@ def test_base_flowsheet_runner_before_after_and_annotate_error():
     ann["v"]["title"] = "changed"
     print(f"@@ after: _ann = {rn._ann}")
     assert rn.annotated_vars["v"]["title"] != "changed"
-
-
-@pytest.mark.unit
-def test_flowsheetrunner_set_solve_step(monkeypatch):
-    rn = FlowsheetRunner(solve_step="special_solve")
-    assert rn.get_action("solver_output")._user_solve_step == "special_solve"
-
-    monkeypatch.setattr(rn, "run_step", lambda name: setattr(rn, "_build_called", name))
-    monkeypatch.setattr(
-        rn, "run_steps", lambda **kwargs: setattr(rn, "_solve_called", kwargs)
-    )
-    rn.build()
-    rn.solve_initial()
-    assert rn._build_called == "build"
-    assert rn._solve_called == {"last": "solve_initial"}

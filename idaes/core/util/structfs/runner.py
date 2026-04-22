@@ -78,7 +78,6 @@ class Runner:
         self._actions: dict[str, ActionType] = {}
         self._step_names = list(steps)
         self._steps: dict[str, Step] = {}
-        self._child_func: dict[str, Callable] = {}
         self.reset()
         self._tags = ""  # for reporting
         self._report_db = report_db or self._get_default_report_db(create=True)
@@ -393,7 +392,7 @@ class Runner:
                 self._step_end(name)
                 return result
 
-            self.add_step(name, wrapper, child_func=func)
+            self.add_step(name, wrapper)
 
             return wrapper
 

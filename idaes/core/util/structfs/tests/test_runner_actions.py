@@ -113,7 +113,6 @@ def test_class_timer(monkeypatch):
 def test_unit_dof_action_base():
     rn = flash_flowsheet.FS
     rn.reset()
-    turn_off_mermaid_server(rn)
 
     def check_step(name, data):
         print(f"check_step {name} data: {data}")
@@ -142,7 +141,6 @@ def test_unit_dof_action_base():
 def test_unit_dof_action_getters():
     rn = flash_flowsheet.FS
     rn.reset()
-    turn_off_mermaid_server(rn)
 
     aname = "check_dof"
     rn.add_action(
@@ -170,7 +168,6 @@ def test_unit_dof_action_getters():
 def test_dof_report():
     rn = flash_flowsheet.FS
     rn.reset()
-    turn_off_mermaid_server(rn)
     check_steps = (
         "build",
         "set_operating_conditions",
