@@ -84,6 +84,7 @@ class Runner:
 
     @classmethod
     def get_report_db(cls):
+        """Get (default) report database"""
         return cls._get_default_report_db(create=False)
 
     @staticmethod
