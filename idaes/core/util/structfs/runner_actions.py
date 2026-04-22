@@ -56,7 +56,7 @@ from idaes.core.util.compute_diagnostics import (
     DiagnosticsError,
 )
 from .runner import Action
-from .fsrunner import BaseFlowsheetRunner, FlowsheetRunner
+from .fsrunner import BaseFlowsheetRunner
 
 
 class Timer(Action):
@@ -205,7 +205,7 @@ class Timer(Action):
         return rpt
 
 
-# Hold degrees of freedom for one FlowsheetRunner 'step'
+# Hold degrees of freedom for one BaseFlowsheetRunner 'step'
 # {key=component: value=dof}
 UnitDofType = dict[str, int]
 
@@ -237,7 +237,7 @@ class UnitDofChecker(Action):
 
     def __init__(
         self,
-        runner: FlowsheetRunner,
+        runner: BaseFlowsheetRunner,
         flowsheet: str,
         steps: Union[str, list[str]],
         step_func: Optional[Callable[[str, UnitDofType], None]] = None,
@@ -419,7 +419,12 @@ class UnitDofChecker(Action):
 class SolverActionBase(Action):
     """Base class for actions to get solver state, output, etc."""
 
-    def __init__(self, runner: FlowsheetRunner, **kwargs):
+    #: By default, consider any step with 'solve' in its name to
+    #: be a solver step. This can be overridden by setting :attr:`solve_steps`
+    #: to some other list of step names.
+    DEFAULT_SOLVE_STEPS = [s for s in BaseFlowsheetRunner.STEPS if "solve" in s]
+
+    def __init__(self, runner: BaseFlowsheetRunner, **kwargs):
         """Initialize solver output capture state.
 
         Args:
@@ -427,7 +432,7 @@ class SolverActionBase(Action):
             **kwargs: Additional keyword arguments passed to `Action`.
         """
         super().__init__(runner, **kwargs)
-        self._solve_steps = ["solve_initial", "solve_optimization"]
+        self._solve_steps = self.DEFAULT_SOLVE_STEPS
 
     @property
     def solve_steps(self) -> list[str]:
@@ -464,7 +469,7 @@ class CaptureSolverOutput(SolverActionBase):
         """Constructor
 
         Args:
-            runner: FlowsheetRunner object
+            runner: BaseFlowsheetRunner object
             kwargs: Arguments passed through to superclass
         """
         super().__init__(runner, **kwargs)
@@ -511,7 +516,7 @@ class GetSolverResults(SolverActionBase):
         #: this is a list.
         results: list[SolverResult] = []
 
-    def __init__(self, runner: FlowsheetRunner, **kwargs):
+    def __init__(self, runner: BaseFlowsheetRunner, **kwargs):
         """Constructor.
 
         Args:

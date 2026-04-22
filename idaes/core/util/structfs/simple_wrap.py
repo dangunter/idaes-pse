@@ -31,26 +31,28 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
     def __init__(self, *args, **kwargs):
         """Constructor."""
         from .runner_actions import (  # pylint: disable=C0415
+            Timer,
             UnitDofChecker,
             CaptureSolverOutput,
+            GetSolverResults,
             ModelVariables,
             MermaidDiagram,
-            Timer,
             StreamTable,
             Diagnostics,
         )
 
-        super().__init__(*args, solve_steps=["build"], **kwargs)
+        super().__init__(*args, **kwargs)
         self.main_func = None
         self.main_func_args = []
         self.main_func_kwargs = {}
         self.add_action("timings", Timer)
         self.add_action("degrees_of_freedom", UnitDofChecker, "fs", ["build"])
         self.add_action("capture_solver_output", CaptureSolverOutput)
+        self.add_action("solver_results", GetSolverResults)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
         self.add_action("stream_table", StreamTable)
-        self.add_action("stream_table", Diagnostics)
+        self.add_action("diagnostics", Diagnostics)
 
 
 # create an instance of FlowsheetRunnerWithMain
