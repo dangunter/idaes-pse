@@ -427,34 +427,20 @@ class SolverActionBase(Action):
             **kwargs: Additional keyword arguments passed to `Action`.
         """
         super().__init__(runner, **kwargs)
-        self._is_solve_step_fn = self._default_solve_step_check
+        self._solve_steps = ["solve_initial", "solve_optimization"]
 
-    def set_solve_step(self, match: str | Callable):
-        """Set the step whose output should be captured.
+    @property
+    def solve_steps(self) -> list[str]:
+        """Get list of solve steps"""
+        return self._solve_steps.copy()
 
-        Args:
-            match: Either a step name to treat as the solver step, or a
-                   function (returning True/False) that takes the name
-                   as its only argument.
-        """
-        if isinstance(match, str):
-            self._is_solve_step_fn = lambda s: s == match
-        else:
-            try:
-                match("")
-            except TypeError:
-                raise RuntimeError(
-                    "Solve step must be string or function taking one "
-                    "string argument"
-                )
-            self._is_solve_step_fn = match
+    @solve_steps.setter
+    def solve_steps(self, value: list[str]):
+        """Set new list of solve steps"""
+        self._solve_steps = value
 
     def is_solve_step(self, name: str) -> bool:
         """Whether step `name` is the solve step.
-
-        This can be explicitly controlled by calling `set_solve_step()`
-        with the step name that must match exactly.
-        Otherwise, the internal `_default_solve_step_check()` function is used.
 
         Args:
             name: step name
@@ -462,10 +448,7 @@ class SolverActionBase(Action):
         Returns:
             True if it is the solve step, otherwise False
         """
-        return self._is_solve_step_fn(name)
-
-    def _default_solve_step_check(self, name: str) -> bool:
-        return name.startswith("solve")
+        return name in self._solve_steps
 
 
 class CaptureSolverOutput(SolverActionBase):
@@ -477,17 +460,16 @@ class CaptureSolverOutput(SolverActionBase):
         #: String of output keyed by step
         output: dict[str, str] = {}
 
-    def __init__(self, runner, solve_re=r"solve.*", **kwargs):
+    def __init__(self, runner, **kwargs):
         """Constructor
 
         Args:
             runner: FlowsheetRunner object
-            solve_re: Regular expression to detect solver step. Defaults to r".*solve".
+            kwargs: Arguments passed through to superclass
         """
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
-        self._solve_re = solve_re
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
@@ -501,9 +483,6 @@ class CaptureSolverOutput(SolverActionBase):
             self._logs[step_name] = self._solver_out.getvalue()
             self._solver_out = None
             sys.stdout = self._save_stdout
-
-    def _is_solve_step(self, name: str) -> bool:
-        return re.match(self._solve_re, name) is not None
 
     def report(self) -> Report:
         """Machine-readable report with solver output.
@@ -865,7 +844,7 @@ class StreamTable(Action):
         return self.Report(**self._stream_table)
 
 
-class Diagnostics(Action):
+class Diagnostics(SolverActionBase):
     """Action to get model diagnostics."""
 
     class Report(BaseModel):
@@ -884,15 +863,35 @@ class Diagnostics(Action):
         structural_issues: StructuralIssuesData | None = None
         numerical_issues: NumericalIssuesData | None = None
 
+    def __init__(self, runner, **kwargs):
+        super().__init__(runner, **kwargs)
+        self._had_solve = False
+
+    def after_step(self, name):
+        if self.is_solve_step(name):
+            self._had_solve = True
+
     def after_run(self):
         """Get model diagnostics after the run."""
-        if self._runner.model is None:
+        m = self._runner.model
+        if m is None:
             self.diagnostics = {}
         else:
             try:
-                dd = DiagnosticsData(model=self._runner.model)
-                self.diagnostics = dd.all_as_obj()
-            except DiagnosticsError:
+                dd = DiagnosticsData(model=m)
+                if self._had_solve:
+                    # get everything if a solve
+                    self.diagnostics = dd.all_as_obj()
+                else:
+                    # only get structural issues if no solve
+                    self.diagnostics = {
+                        "structural_issues": dd.structural_issues(),
+                    }
+            except DiagnosticsError as err:
+                self.log.error(f"Diagnostics will be empty due to error: {err}")
+                self.diagnostics = {}
+            except TypeError as err:
+                self.log.warning(f"Diagnostics error due to model object type: {err}")
                 self.diagnostics = {}
 
     def report(self) -> Report:

@@ -37,18 +37,20 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
             MermaidDiagram,
             Timer,
             StreamTable,
+            Diagnostics,
         )
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, solve_steps=["build"], **kwargs)
         self.main_func = None
         self.main_func_args = []
         self.main_func_kwargs = {}
         self.add_action("timings", Timer)
         self.add_action("degrees_of_freedom", UnitDofChecker, "fs", ["build"])
-        self.add_action("capture_solver_output", CaptureSolverOutput, solve_re=r"build")
+        self.add_action("capture_solver_output", CaptureSolverOutput)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
         self.add_action("stream_table", StreamTable)
+        self.add_action("stream_table", Diagnostics)
 
 
 # create an instance of FlowsheetRunnerWithMain
