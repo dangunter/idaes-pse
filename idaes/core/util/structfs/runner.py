@@ -114,7 +114,18 @@ class Runner:
         """Look for key in `context`"""
         return self._context[key]
 
-    def add_step(self, name: str, func: Callable, child_func: Callable = None):
+    def __getattr__(self, key):
+        """For attributes not in the class, look to see if they
+        match attributes on the context and if so return that value.
+        """
+        if hasattr(self._context, key):
+            return getattr(self._context, key)
+        raise AttributeError(
+            f"Runner object has no attribute '{key}' and "
+            f"'{key}' is not an attribute of the context object"
+        )
+
+    def add_step(self, name: str, func: Callable):
         """Add a step.
 
         Steps are executed by calling `func(context)`,
@@ -124,7 +135,6 @@ class Runner:
         Args:
             name: Add a step to be executed
             func: Function to execute for the step.
-            child_func: The 'real' function called to do the work
 
         Raises:
             KeyError: _description_
@@ -132,9 +142,9 @@ class Runner:
         step_name = self.normalize_name(name)
 
         if step_name not in self._step_names:
-            raise KeyError(f"Unknown step: {step_name}")
+            steppenlist = ", ".join(self._step_names)
+            raise KeyError(f"Unknown step: {step_name} not in: {steppenlist}")
         self._steps[step_name] = Step(step_name, func)
-        self._child_func[step_name] = child_func
 
     def add_substep(self, base_name, name, func):
         """Add a substep for a given step.
@@ -538,6 +548,7 @@ class Action(ABC):
         if log is None:
             log = _log
         self.log = log
+        self._dbg = self.log.isEnabledFor(logging.DEBUG)
 
     def before_step(self, step_name: str):
         """Perform this action before the named step.

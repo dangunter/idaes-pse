@@ -16,13 +16,16 @@ in `FlowsheetRunner`.
 """
 
 # stdlib
+from copy import deepcopy
+from enum import Enum
 from types import FunctionType
 from typing import Sequence
 
 # third-party
-from pyomo.environ import ConcreteModel
+from pyomo.environ import ConcreteModel, SolverFactory
 from pyomo.environ import units as pyunits
 from idaes.core import FlowsheetBlock
+from idaes.core.solvers import get_solver
 
 try:
     from idaes_connectivity import Connectivity
@@ -32,6 +35,8 @@ except ImportError:
 
 # package
 from .runner import Runner
+
+DEFAULT_SOLVER_NAME = "ipopt"
 
 # Constants
 #: Special key used to embed a flowsheet runner instance in a result dict
@@ -63,6 +68,39 @@ class Context(dict):
         """The solver used to solve the model."""
         self["solver"] = value
 
+    def solve(self):
+        """Perform solve, store result"""
+        if self.solver is None:
+            self.solver = SolverFactory(DEFAULT_SOLVER_NAME)
+        self.results = self.solver.solve(self.model, tee=self["tee"])
+
+    @property
+    def tee(self):
+        """Return whether solver output should be streamed.
+
+        Returns:
+            True if solver output should be echoed, otherwise False.
+        """
+        return self["tee"]
+
+    @property
+    def results(self):
+        """Return the stored solver results, if any.
+
+        Returns:
+            The stored solver results object, or None if no solve has run.
+        """
+        return self.get("results", None)
+
+    @results.setter
+    def results(self, value):
+        """Store solver results in the context.
+
+        Args:
+            value: Solver results object to store.
+        """
+        self["results"] = value
+
 
 class BaseFlowsheetRunner(Runner):
     """Specialize the base `Runner` to handle IDAES flowsheets.
@@ -73,18 +111,18 @@ class BaseFlowsheetRunner(Runner):
         STEPS: List of defined step names.
     """
 
+    _SET_SOLVER_STEP = "set_solver"
+
     STEPS = (
         "build",
+        "set_solver",
+        "initialize",
         "set_operating_conditions",
         "set_scaling",
-        "initialize",
-        "set_solver",
         "solve_initial",
         "add_costing",
-        "check_model_structure",
         "initialize_costing",
         "solve_optimization",
-        "check_model_numerics",
     )
 
     def __init__(self, solver=None, tee=True, steps: Sequence[str] = None):
@@ -110,6 +148,7 @@ class BaseFlowsheetRunner(Runner):
         if so, creates an empty Pyomo ConcreteModel to use as
         the base model for the flowsheet.
         """
+        self._set_solver()
         from_step_name = self.normalize_name(first)
         if (
             from_step_name == "-"
@@ -128,7 +167,22 @@ class BaseFlowsheetRunner(Runner):
 
         super().run_steps(first, last, **kwargs)
 
+    def _set_solver(self):
+        """Set the solver, if no 'set_solver' step exists."""
+        if self._SET_SOLVER_STEP not in self._steps:
+            if self._solver is None:
+                # use default solver, if none given
+                self._context.solver = get_solver()
+            elif isinstance(self._solver, str):
+                # create solver from string
+                self._context.solver = SolverFactory(self._solver)
+            else:
+                self._context.solver = self._solver
+            if self._solver_options:
+                self._context.solver.options = self._solver_options
+
     def reset(self):
+        """Reset the runner context to its initial state."""
         self._context = Context(solver=self._solver, tee=self._tee, model=None)
 
     def _create_model(self):
@@ -143,8 +197,11 @@ class BaseFlowsheetRunner(Runner):
 
     @property
     def results(self):
-        """Syntactic sugar to return the `results` in the context."""
-        return self._context["results"]
+        """Syntactic sugar to return the `result` in the context.
+        Returns:
+            results from Pyomo, or None if not set
+        """
+        return self._context.results
 
     def annotate_var(
         self,
@@ -238,7 +295,14 @@ class BaseFlowsheetRunner(Runner):
     @property
     def annotated_vars(self) -> dict[str,]:
         """Get (a copy of) the annotated variables."""
-        return self._ann.copy()
+        return deepcopy(self._ann)
+
+
+class DiagnosticReportType(Enum):
+    """Different types of diagnostic reports"""
+
+    STRUCTURAL = "structural"
+    NUMERICAL = "numerical"
 
 
 class FlowsheetRunner(BaseFlowsheetRunner):
@@ -248,6 +312,11 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         """Wrapper for the UnitDofChecker action"""
 
         def __init__(self, runner):
+            """Create the degrees-of-freedom helper.
+
+            Args:
+                runner: Flowsheet runner that owns the underlying action.
+            """
             from .runner_actions import UnitDofChecker  # pylint: disable=C0415
 
             # check DoF after build, initial solve, and optimization solve
@@ -279,6 +348,11 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         """Wrapper for the Timer action"""
 
         def __init__(self, runner):
+            """Create the timings helper.
+
+            Args:
+                runner: Flowsheet runner that owns the underlying action.
+            """
             from .runner_actions import Timer  # pylint: disable=C0415
 
             self._a: Timer = runner.add_action("timings", Timer)
@@ -304,20 +378,38 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         def _ipython_display_(self):
             self._a._ipython_display_()  # pylint: disable=protected-access
 
-    def __init__(self, **kwargs):
+    def __init__(self, solve_step=None, **kwargs):
+        """Initialize a flowsheet runner with default inspection actions.
+
+        Args:
+            solve_step: Optional step name or function to pass to the
+                        `set_solve_step()` method of `CaptureSolverOutput`
+                        and `GetSolverResult`.
+            **kwargs: Additional keyword arguments passed to
+                `BaseFlowsheetRunner`.
+        """
         from .runner_actions import (  # pylint: disable=C0415
             CaptureSolverOutput,
+            GetSolverResults,
             ModelVariables,
             MermaidDiagram,
+            Diagnostics,
             StreamTable,
         )
 
         super().__init__(**kwargs)
         self.dof = self.DegreesOfFreedom(self)
         self.timings = self.Timings(self)
-        self.add_action("capture_solver_output", CaptureSolverOutput)
+        for name, clazz in (
+            ("solver_output", CaptureSolverOutput),
+            ("solver_results", GetSolverResults),
+        ):
+            self.add_action(name, clazz)
+            if solve_step is not None:
+                self.get_action(name).set_solve_step(solve_step)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
+        self.add_action("diagnostics", Diagnostics)
         self.add_action("stream_table", StreamTable)
 
     def build(self):
@@ -334,6 +426,20 @@ class FlowsheetRunner(BaseFlowsheetRunner):
             return display_connectivity(input_model=self.model)
         else:
             return ""
+
+    @property
+    def solver_status(self) -> str:
+        """Solver status, from Pyomo
+
+        Returns:
+            str: Pyomo value (e.g., "ok") or "unknown" if it cannot be found
+        """
+        rpt = self.get_action("solver_results").report()
+        if len(rpt.results) > 0:
+            value = rpt.results[0].solver["Status"]
+        else:
+            value = "unknown"
+        return value
 
 
 ## Utility code to find modules

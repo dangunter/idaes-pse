@@ -192,7 +192,7 @@ def set_solver(ctx):
 
 @FS.step("solve_optimization")
 def solve_opt(ctx):
-    ctx["results"] = ctx.solver.solve(ctx.model, tee=ctx["tee"])
+    ctx.solve()
 ```
 
 Details on the changes:
@@ -209,8 +209,8 @@ Details on the changes:
   called `m`) with a context object that has a `.model` attribute.
 * **44-46**: Add a function for the `set_solver` step, to select the solver
   (here, IPOPT).
-* **46**: In the "solve_optimization" step, assign the solver result to
-  `ctx["results"]`.
+* **46**: In the "solve_optimization" step, call the solver, which will assign the result to `ctx.result`,
+  which is also accessible as `FS.result`.
 
 ## Step 2: Execute and inspect
 
@@ -224,7 +224,7 @@ could do this:
 
 ```{code}
 FS.run_steps()
-assert FS.results.solver.status == SolverStatus.ok
+assert FS.result.solver.status == SolverStatus.ok
 ```
 
 Some more examples of using the FlowsheetRunner are shown in the
@@ -234,6 +234,9 @@ example notebooks found under the `docs/examples/structfs` directory
 ## Actions  
 
 ```{autodoc2-docstring} structfs.runner.Action
+```
+
+```{autodoc2-docstring} structfs.runner_actions
 ```
 
 ## Annotation
@@ -260,3 +263,5 @@ fi_main = _Wrapper.main
 
 #: Get the default ReportDB database (wrapper) for reports
 get_report_db = Runner.get_report_db
+
+from .fsrunner import FlowsheetRunner

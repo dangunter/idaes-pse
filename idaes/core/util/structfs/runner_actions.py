@@ -11,12 +11,21 @@
 # for full copyright and license information.
 #################################################################################
 """
-Predefined Actions for the generic Runner.
+## Runner actions
+
+This module defines a set of 'actions' that can be automatically
+executed before, during, and after a run of a flowsheet that is
+wrapped with the `Runner` decorators.
+
+The Action subclasses in this module return Pydantic models
+that can be formatted as JSON. By convention, the model is
+defined in a nested class called `Report`.
 """
 
 # stdlib
 from collections.abc import Callable
 from io import StringIO
+import logging
 import re
 import sys
 import time
@@ -24,7 +33,7 @@ from typing import Union, Optional
 
 # third-party
 from pyomo.network import Arc
-from pyomo.network.port import ScalarPort
+from pyomo.network.port import ScalarPort, Port
 from pyomo.core.base.var import IndexedVar
 from pyomo.core.base.param import IndexedParam
 import pyomo.environ as pyo
@@ -39,6 +48,13 @@ except ImportError:
 from idaes.core.util.model_statistics import degrees_of_freedom
 from idaes.core.util.tables import create_stream_table_ui
 from idaes.core.base.unit_model import ProcessBlockData
+from idaes.core.util.compute_diagnostics import (
+    DiagnosticsData,
+    StructuralIssuesData,
+    NumericalIssuesData,
+    ComponentList,
+    DiagnosticsError,
+)
 from .runner import Action
 from .fsrunner import BaseFlowsheetRunner, FlowsheetRunner
 
@@ -71,23 +87,35 @@ class Timer(Action):
         self._step_order = runner.list_steps()
 
     def before_step(self, step_name):
+        """Record the start time for a step.
+
+        Args:
+            step_name: Name of the step about to run.
+        """
         self._step_begin[step_name] = time.time()
 
     def after_step(self, step_name):
+        """Record the elapsed time for a completed step.
+
+        Args:
+            step_name: Name of the step that just finished.
+        """
         t1 = time.time()
         t0 = self._step_begin.get(step_name, None)
         if t0 is None:
-            self.log.warning(f"Timer: step {step_name} end without begin")
+            self.log.warning(f"Timer: step '{step_name}' end without begin")
         else:
             self._cur_step_times[step_name] = t1 - t0
             self._step_begin[step_name] = None
 
     def before_run(self):
+        """Initialize timer state before a run starts."""
         self._run_begin = time.time()
         self._cur_step_times = {}
         self._step_begin = {}
 
     def after_run(self):
+        """Finalize run timing data after a run completes."""
         t1 = time.time()
         if self._run_begin is None:
             self.log.warning("Timer: run end without begin")
@@ -100,6 +128,11 @@ class Timer(Action):
             self.step_times.append(filled_times)
 
     def __len__(self):
+        """Return the number of recorded runs.
+
+        Returns:
+            The number of completed runs captured by this timer.
+        """
         return len(self.run_times)
 
     def get_history(self) -> list[dict]:
@@ -134,8 +167,9 @@ class Timer(Action):
         Returns:
             str: If output stream was None, the text summary; otherwise None
         """
+        stringio = False
         if stream is None:
-            stream = StringIO()
+            stream, stringio = StringIO(), True
 
         if len(self.run_times) == 0:
             return ""  # nothing to summarize
@@ -156,10 +190,7 @@ class Timer(Action):
 
         stream.write(f"\nTotal time: {d['run']:.3f} s\n")
 
-        if isinstance(stream, StringIO):
-            return stream.getvalue()
-
-        return None
+        return stream.getvalue() if stringio else None
 
     def _ipython_display_(self):
         print(self.summary())
@@ -195,8 +226,14 @@ class UnitDofChecker(Action):
     class Report(BaseModel):
         """Report on degrees of freedom in a model."""
 
-        steps: dict[str, UnitDofType] = Field(default={})
-        model: int = Field(default=0)
+        steps: dict[str, UnitDofType] = Field(
+            default={},
+            description="Degrees of freedom for each named step",
+            examples=[{"build": 2, "set_operating_conditions": 1, "solve": 1}],
+        )
+        model: int = Field(
+            default=0, description="Degrees of freedom for the entire model"
+        )
 
     def __init__(
         self,
@@ -236,6 +273,11 @@ class UnitDofChecker(Action):
         self._fs = flowsheet
 
     def after_step(self, step_name: str):
+        """Compute unit and model degrees of freedom after a step.
+
+        Args:
+            step_name: Name of the step that just completed.
+        """
         step_name = self._runner.normalize_name(step_name)
         if step_name not in self._steps:
             self.log.debug(f"Do not check DoF for step: {step_name}")
@@ -270,7 +312,7 @@ class UnitDofChecker(Action):
     def _is_unit_model(block):
         return isinstance(block, ProcessBlockData)
 
-    def summary(self, stream=sys.stdout, step=None):
+    def summary(self, stream=None, step=None):
         """Readable summary of the degrees of freedom.
 
         Args:
@@ -306,9 +348,11 @@ class UnitDofChecker(Action):
 
         if isinstance(stream, StringIO):
             return stream.getvalue()
+        else:
+            stream.flush()
 
     def _ipython_display_(self):
-        self.summary()
+        self.summary(stream=sys.stdout)
 
     def get_dof(self) -> dict[str, UnitDofType]:
         """Get degrees of freedom
@@ -372,8 +416,66 @@ class UnitDofChecker(Action):
         return dof
 
 
-class CaptureSolverOutput(Action):
+class SolverActionBase(Action):
+    """Base class for actions to get solver state, output, etc."""
+
+    def __init__(self, runner: FlowsheetRunner, **kwargs):
+        """Initialize solver output capture state.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
+        super().__init__(runner, **kwargs)
+        self._is_solve_step_fn = self._default_solve_step_check
+
+    def set_solve_step(self, match: str | Callable):
+        """Set the step whose output should be captured.
+
+        Args:
+            match: Either a step name to treat as the solver step, or a
+                   function (returning True/False) that takes the name
+                   as its only argument.
+        """
+        if isinstance(match, str):
+            self._is_solve_step_fn = lambda s: s == match
+        else:
+            try:
+                match("")
+            except TypeError:
+                raise RuntimeError(
+                    "Solve step must be string or function taking one "
+                    "string argument"
+                )
+            self._is_solve_step_fn = match
+
+    def is_solve_step(self, name: str) -> bool:
+        """Whether step `name` is the solve step.
+
+        This can be explicitly controlled by calling `set_solve_step()`
+        with the step name that must match exactly.
+        Otherwise, the internal `_default_solve_step_check()` function is used.
+
+        Args:
+            name: step name
+
+        Returns:
+            True if it is the solve step, otherwise False
+        """
+        return self._is_solve_step_fn(name)
+
+    def _default_solve_step_check(self, name: str) -> bool:
+        return name.startswith("solve")
+
+
+class CaptureSolverOutput(SolverActionBase):
     """Capture the solver output."""
+
+    class Report(BaseModel):
+        """Report object for captured solver output action"""
+
+        #: String of output keyed by step
+        output: dict[str, str] = {}
 
     def __init__(self, runner, solve_re=r"solve.*", **kwargs):
         """Constructor
@@ -389,7 +491,7 @@ class CaptureSolverOutput(Action):
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
-        if self._is_solve_step(step_name):
+        if self.is_solve_step(step_name):
             self._solver_out = StringIO()
             self._save_stdout, sys.stdout = sys.stdout, self._solver_out
 
@@ -403,13 +505,91 @@ class CaptureSolverOutput(Action):
     def _is_solve_step(self, name: str) -> bool:
         return re.match(self._solve_re, name) is not None
 
-    def report(self) -> dict:
+    def report(self) -> Report:
         """Machine-readable report with solver output.
 
         Returns:
-            Report dict, {'solver_logs': "<text-log>"}
+            CaptureSolverOutput.Report
         """
-        return {"solver_logs": self._logs}
+        return self.Report(output=self._logs)
+
+
+class SolverResult(BaseModel):
+    """One solver result in `GetSolverResults.Report.result`"""
+
+    problem: dict[str, int | float | str] = {}
+    solver: dict[str, int | float | str] = {}
+
+
+class GetSolverResults(SolverActionBase):
+    """Retrieve and structure the results from the solver."""
+
+    class Report(BaseModel):
+        """Report object for action"""
+
+        #: Result from Pyomo solver Result object
+        #: Since multiple results may be returned,
+        #: this is a list.
+        results: list[SolverResult] = []
+
+    def __init__(self, runner: FlowsheetRunner, **kwargs):
+        """Constructor.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
+        super().__init__(runner, **kwargs)
+        self._results = []
+
+    def after_step(self, step_name: str):
+        """Action performed after the step."""
+        if self.is_solve_step(step_name):
+            self._extract_results()
+
+    def _extract_results(self):
+        r = self._runner.results
+        # extract Pyomo dict of lists into a list of SolverResult objs
+        # eg {"Solver": [{...}, ], "Problem": [{...},]} ->
+        #    [SolverResult, SolverResult]
+        result_list = []
+        for k, v in r.items():
+            n = len(v)
+            # make sure result list has space
+            while n > len(result_list):
+                result_list.append(SolverResult())
+            # choose which part of result this is
+            if k in ("Solver", "Problem"):
+                sr_attr = k.lower()
+            else:
+                self.log.warning(f"Ignoring unknown key in solver results: {k}")
+                continue
+            # extract Pyomo list for a given attr into SolverResult
+            for i in range(n):
+                v_dict = {}
+                # convert values in dict to int, str, float, or None
+                for v_k, v_v in v[i].items():
+                    if hasattr(v_v, "get_value"):
+                        v_v = v_v.get_value()
+                    if isinstance(v_v, int) or isinstance(v_v, float):
+                        v_dict[v_k] = v_v
+                    else:
+                        s = str(v_v)
+                        if s == "<undefined>":
+                            pass  # who cares? skip it
+                        else:
+                            v_dict[v_k] = s
+                # set the corresponding i-th result attribute
+                setattr(result_list[i], sr_attr, v_dict)
+        self._results = result_list
+
+    def report(self) -> Report:
+        """Report solver result.
+
+        Returns:
+            GetSolverResult.Report
+        """
+        return self.Report(results=self._results)
 
 
 class ModelVariables(Action):
@@ -422,18 +602,28 @@ class ModelVariables(Action):
 
         #: Tree of variables
         variables: dict = Field(default={})
+        port_aliases: dict = Field(default={})
 
     def __init__(self, runner, **kwargs):
+        """Initialize model variable extraction state.
+
+        Args:
+            runner: Flowsheet runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
         assert isinstance(runner, BaseFlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
+        self._vars, self._port_vars = {}, {}
 
     def after_run(self):
         """Actions performed after the run."""
+        self._saved_paths = {}  # fast lookup used in _add_block()
+        self.log = logging.getLogger(self.log.name)
         self._extract_vars(self._runner.model)
 
     def _extract_vars(self, m):
         var_tree = {}
-
+        port_aliases = {}
         for c in m.component_objects():
             # get component type
             if self._is_var(c):
@@ -441,7 +631,14 @@ class ModelVariables(Action):
             elif self._is_param(c):
                 subtype = self.PARAM_TYPE
             else:
-                continue  # ignore other components
+                # find and extract aliases to vars on assoc. ports
+                if hasattr(c, "component_data_objects"):
+                    for port_data in c.component_data_objects(Port, descend_into=False):
+                        comp_name = port_data.name  # proper name of port's component
+                        for port_name, port_var in port_data.vars.items():
+                            if isinstance(port_var, pyo.Var):  # only variables
+                                port_aliases[f"{comp_name}.{port_name}"] = port_var.name
+                continue  # do nothing else
             # start new block
             b = [subtype]
             # add its variables
@@ -452,21 +649,18 @@ class ModelVariables(Action):
             for index in c:
                 v = c[index]
                 indexed = index is not None
-                # get value, allowing for uninitialized
-                # values (set them as None)
-                if isinstance(v, float) or isinstance(v, int):
-                    v_value = v
-                elif not v.is_fixed() and v.stale:
-                    # avoid errors from uninitialized vars
-                    v_value = None
-                else:
-                    try:
-                        v_value = pyo.value(v)
-                    except ValueError:
-                        v_value = None
+                v_value = self._safe_scalar_value(v)
                 if subtype == self.VAR_TYPE:
-                    # index, value, is-fixed, is-stale, lower-bound, upper-bound
-                    item = (index, v_value, v.fixed, v.stale, v.lb, v.ub)
+                    # index, value, fixed, stale, lower bound, upper bound, domain
+                    item = (
+                        index,
+                        v_value,
+                        v.fixed,
+                        v.stale,
+                        v.lb,
+                        v.ub,
+                        str(v.domain),
+                    )
                 else:
                     # index, value
                     item = (index, v_value)
@@ -477,6 +671,58 @@ class ModelVariables(Action):
             self._add_block(var_tree, c.name, b)
 
         self._vars = var_tree
+        self._ports = port_aliases
+
+    def _safe_scalar_value(v):
+        """Get value, allowing for uninitialized values.
+        An uninitialized value will return None.
+        """
+        if isinstance(v, float) or isinstance(v, int):
+            return v
+        if not v.is_fixed() and v.stale:
+            # avoids logged errors from uninitialized vars
+            return None
+        try:
+            return pyo.value(v)
+        except ValueError:
+            return None
+
+    def _get_values(self, c, subtype) -> tuple[list, bool]:
+        """Add each value from an indexed var/param,
+        This also works ok for non-indexed ones.
+
+        Returns:
+            (list of items, indexed flag)
+        """
+        items = []
+        indexed = False
+        for index in c:
+            v = c[index]
+            indexed = index is not None
+            if subtype == self.VAR_TYPE:
+                # index, value, units, is-fixed, is-stale, lower-bound, upper-bound, domain
+                item = (
+                    index,
+                    pyo.value(v),
+                    self._unitstr(c),
+                    v.fixed,
+                    v.stale,
+                    v.lb,
+                    v.ub,
+                    str(v.domain),
+                )
+            else:
+                # index, value, units, domain
+                item = (index, pyo.value(v), self._unitstr(c))
+            items.append(item)
+        return items, indexed
+
+    @staticmethod
+    def _unitstr(c):
+        # Convert Pyomo units obj to string
+        s = str(c.get_units())
+        # Replace 'None' with an empty string
+        return "" if s == "None" else s
 
     @staticmethod
     def _is_var(c):
@@ -503,18 +749,21 @@ class ModelVariables(Action):
             else:
                 parts.append(cur)
                 i += 1
-        # insert in tree
+        # insert in tree by walking down each
+        # key in 'parts', adding empty dicts
+        # as we go
         t, prev = tree, None
         for p in parts:
             prev = t
             if p not in t:
                 t[p] = {}
             t = t[p]
+        # add the block in the final dict
         prev[p] = block
 
     def report(self) -> Report:
         """Report containing model variable values."""
-        return self.Report(variables=self._vars)
+        return self.Report(variables=self._vars, port_aliases=self._ports)
 
 
 class MermaidDiagram(Action):
@@ -525,13 +774,43 @@ class MermaidDiagram(Action):
 
         diagram: list[str]  #: each item is one line
 
+    def __init__(self, runner, **kwargs):
+        """Initialize Mermaid diagram generation settings.
+
+        Args:
+            runner: Runner that owns this action.
+            **kwargs: Additional keyword arguments passed to `Action`.
+        """
+        super().__init__(runner, **kwargs)
+        self._images = True
+        self._model_root_split = []
+
+    def show_unit_images(self, value: bool):
+        """Whether Mermaid displays images for units.
+
+        Args:
+            value: If true, display images. Otherwise, don't.
+        """
+        self._images = bool(value)
+
+    def set_model_root(self, path: str):
+        """Set path to root of model to display (default is model itself).
+
+        Args:
+            path: Dotted path like "fs" or "fs.component"
+        """
+        self._model_root_split = path.split(".")
+
     def after_run(self):
         """Build Mermaid diagram after the run."""
         if Connectivity is None:
             self.diagram = None
         else:
-            conn = Connectivity(input_model=self._runner.model)
-            self.diagram = Mermaid(conn, component_images=True)
+            root = self._runner.model
+            for p in self._model_root_split:
+                root = getattr(root, p)
+            conn = Connectivity(input_model=root)
+            self.diagram = Mermaid(conn, component_images=self._images)
 
     def report(self) -> Report | dict:
         """Report containing the Mermaid diagram.
@@ -583,3 +862,46 @@ class StreamTable(Action):
 
     def report(self) -> Report:
         return self.Report(**self._stream_table)
+
+
+class Diagnostics(Action):
+    """Action to get model diagnostics."""
+
+    class Report(BaseModel):
+        """Report containing model diagnostics.
+
+        These attributes should match keys of dict returned by the method
+        `idaes.core.util.compute_diagnostics.DiagnosticsData.all_as_obj()`.
+        """
+
+        #: This is False if there was no model to diagnose
+        valid: bool = False
+        #: If valid is True, all these should have values,
+        #: otherwise they will all be None/null
+        variables: ComponentList | None = None
+        constraints: ComponentList | None = None
+        structural_issues: StructuralIssuesData | None = None
+        numerical_issues: NumericalIssuesData | None = None
+
+    def after_run(self):
+        """Get model diagnostics after the run."""
+        if self._runner.model is None:
+            self.diagnostics = {}
+        else:
+            try:
+                dd = DiagnosticsData(model=self._runner.model)
+                self.diagnostics = dd.all_as_obj()
+            except DiagnosticsError:
+                self.diagnostics = {}
+
+    def report(self) -> Report:
+        """Report containing model diagnostics information.
+
+        Returns:
+            Report object
+        """
+        report = self.Report()
+        for key, val in self.diagnostics.items():
+            setattr(report, key, val)
+        report.valid = bool(self.diagnostics)
+        return report
