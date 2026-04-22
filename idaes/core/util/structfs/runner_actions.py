@@ -24,6 +24,7 @@ defined in a nested class called `Report`.
 
 # stdlib
 from collections.abc import Callable
+from datetime import datetime
 from io import StringIO
 import logging
 import re
@@ -36,6 +37,7 @@ from pyomo.network import Arc
 from pyomo.network.port import ScalarPort, Port
 from pyomo.core.base.var import IndexedVar
 from pyomo.core.base.param import IndexedParam
+from pyomo.opt.results.container import ScalarData
 import pyomo.environ as pyo
 from pydantic import BaseModel, Field
 
@@ -503,6 +505,7 @@ class SolverResult(BaseModel):
 
     problem: dict[str, int | float | str] = {}
     solver: dict[str, int | float | str] = {}
+    values: dict[str, int | float | str | dict] = {}
 
 
 class GetSolverResults(SolverActionBase):
@@ -531,13 +534,41 @@ class GetSolverResults(SolverActionBase):
         if self.is_solve_step(step_name):
             self._extract_results()
 
+    @staticmethod
+    def _sval(v):
+        # convert to a numeric or string value
+        if isinstance(v, datetime):
+            return v.timestamp()
+        elif isinstance(v, float) or isinstance(v, int):
+            return v
+        return str(v)
+
     def _extract_results(self):
         r = self._runner.results
+
+        if r is None:
+            self._results = []
+            return
+
         # extract Pyomo dict of lists into a list of SolverResult objs
         # eg {"Solver": [{...}, ], "Problem": [{...},]} ->
         #    [SolverResult, SolverResult]
-        result_list = []
+        # Add ScalarData items (single values) to every object
+        result_list, scalars = [], {}
         for k, v in r.items():
+
+            # Special processing for single-values
+            if isinstance(v, ScalarData):
+                vv = v.get_value()
+                if isinstance(vv, dict):
+                    scalar_value = {}
+                    for k, v in vv.items():
+                        scalar_value[k] = self._sval(v)
+                else:
+                    scalar_value = self._sval(vv)
+                scalars[k] = scalar_value
+                continue  # done
+
             n = len(v)
             # make sure result list has space
             while n > len(result_list):
@@ -565,6 +596,12 @@ class GetSolverResults(SolverActionBase):
                             v_dict[v_k] = s
                 # set the corresponding i-th result attribute
                 setattr(result_list[i], sr_attr, v_dict)
+
+        # Add collected scalar values to every result in list
+        for r in result_list:
+            for k, v in scalars.items():
+                r.values[k] = v
+
         self._results = result_list
 
     def report(self) -> Report:
@@ -767,7 +804,7 @@ class MermaidDiagram(Action):
             **kwargs: Additional keyword arguments passed to `Action`.
         """
         super().__init__(runner, **kwargs)
-        self._images = True
+        self._images = False  # TODO: make this configurable
         self._model_root_split = []
 
     def show_unit_images(self, value: bool):
@@ -888,10 +925,8 @@ class Diagnostics(SolverActionBase):
                     # get everything if a solve
                     self.diagnostics = dd.all_as_obj()
                 else:
-                    # only get structural issues if no solve
-                    self.diagnostics = {
-                        "structural_issues": dd.structural_issues(),
-                    }
+                    # TODO: get structural issues?
+                    self.diagnostics = {}
             except DiagnosticsError as err:
                 self.log.error(f"Diagnostics will be empty due to error: {err}")
                 self.diagnostics = {}

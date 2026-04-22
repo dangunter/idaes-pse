@@ -11,15 +11,19 @@
 # for full copyright and license information.
 #################################################################################
 """
-**this** is the documentation for the simple wrapper
+Simple wrapper
 """
 
 # stdlib
 import inspect
+import logging
 import os
 
 # package
 from .fsrunner import BaseFlowsheetRunner, RESULT_FLOWSHEET_KEY
+
+
+_log = logging.getLogger(__name__)
 
 
 class SimpleFlowsheetRunner(BaseFlowsheetRunner):
@@ -55,7 +59,7 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
         self.add_action("diagnostics", Diagnostics)
 
 
-# create an instance of FlowsheetRunnerWithMain
+# Global flowsheet runner, will create as needed
 _FS = SimpleFlowsheetRunner()
 
 
@@ -124,20 +128,30 @@ class _Wrapper:
     model variables, degrees of freedom, diagnostics, etc.
     """
 
+    MAIN_STEP_NAME = "build"
+
     # add a build step that simply calls the provided main function
     # to build & solve the model.
-    @_FS.step("build")
+    @_FS.step(MAIN_STEP_NAME)
     def _build(ctx):
         model, solve_result = _FS.main_func(*_FS.main_func_args, **_FS.main_func_kwargs)
         ctx.model = model
         ctx["results"] = solve_result  # pylint: disable=E1137
 
     @classmethod
-    def main(cls, **main_kw):
+    def main(cls, solve=True, **main_kw):
         """Decorator *factory* for function that returns the tuple (model, results)
         after building and solving a model, so that it provides
         information through the FlowsheetRunner API.
         """
+        # Set `solve_steps` to control solver-result-dependent reports.
+        if solve:
+            _log.debug("@fi_main() function contains solve")
+            solve_steps = [cls.MAIN_STEP_NAME]
+        else:
+            _log.debug("@fi_main() function does not contain a solve")
+            solve_steps = []
+        _FS.set_solve_steps(solve_steps)
 
         def fi_wrapper_factory(main_fn):
             # note: don't change 'fi_wrapper' name, since this

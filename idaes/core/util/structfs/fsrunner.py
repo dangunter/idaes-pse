@@ -131,23 +131,20 @@ class BaseFlowsheetRunner(Runner):
         tee=True,
         solver_options: dict | None = None,
         steps: Sequence[str] = None,
-        solve_steps: Sequence[str] = None,
     ):
         if steps is None:
             steps = self.STEPS
         self.build_step = steps[0]
         self._solver, self._tee = solver, tee
         self._solver_options = solver_options or {}
-        self._solve_steps = solve_steps
         self._ann = {}
         super().__init__(steps)  # needs to be last
 
-    def add_action(self, *args, **kwargs) -> object:
-        """Add `solve_steps` provided in constructor before adding Action."""
-        action = super().add_action(*args, **kwargs)
-        if self._solve_steps:
-            action.solve_steps = self._solve_steps
-        return action
+    def set_solve_steps(self, solve_steps: Sequence[str]):
+        """Set `solve_steps` for all contained actions which have this attribute."""
+        for _, action in self._actions.items():
+            if hasattr(action, "solve_steps"):
+                action.solve_steps = solve_steps
 
     def run_steps(
         self,
@@ -414,16 +411,9 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         super().__init__(**kwargs)
         self.dof = self.DegreesOfFreedom(self)
         self.timings = self.Timings(self)
-
-        if solve_steps is None:
-            solve_steps = [s for s in self.STEPS if "solve" in s]
-        for name, clazz in (
-            ("solver_output", CaptureSolverOutput),
-            ("solver_results", GetSolverResults),
-            ("diagnostics", Diagnostics),
-        ):
-            self.add_action(name, clazz)
-            self.get_action(name).solve_steps = solve_steps
+        self.add_action("solver_output", CaptureSolverOutput)
+        self.add_action("solver_results", GetSolverResults)
+        self.add_action("diagnostics", Diagnostics)
         self.add_action("model_variables", ModelVariables)
         self.add_action("mermaid_diagram", MermaidDiagram)
         self.add_action("stream_table", StreamTable)
