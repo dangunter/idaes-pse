@@ -22,7 +22,6 @@ import os
 # package
 from .fsrunner import BaseFlowsheetRunner, RESULT_FLOWSHEET_KEY
 
-
 _log = logging.getLogger(__name__)
 
 
