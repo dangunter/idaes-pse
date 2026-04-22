@@ -276,6 +276,7 @@ class Runner:
     def _save_report(self):
         rpt = self.report()
         _log.debug("Adding report to DB")
+        # TODO: get status from report
         self._report_db.add_report(rpt, tags=self._tags)
 
     def set_report_target(self, **target_kw):

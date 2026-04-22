@@ -54,6 +54,7 @@ class ReportDB:
             ("created", "REAL"),
             ("target_hash", "TEXT"),
             ("tags", "TEXT"),
+            ("status", "BOOLEAN"),
             ("report", "BLOB"),
         ]
         + list(TARGET_COLUMNS)
@@ -114,7 +115,14 @@ class ReportDB:
             result.append(f"{nm} {ty}" if typed else nm)
         return result
 
-    def add_report(self, data: str | dict, tags: str = "", hash_=None, **target_kw):
+    def add_report(
+        self,
+        data: str | dict,
+        tags: str = "",
+        hash_=None,
+        status: bool = False,
+        **target_kw,
+    ):
         """Insert a report and its metadata into the database.
 
         Args:
@@ -156,7 +164,7 @@ class ReportDB:
             else:
                 rpt_bytes = json.dumps(data).encode("utf-8")
             # construct inserted values and placeholder
-            colvalues = [created, hash_, tags, rpt_bytes] + tgtvalues
+            colvalues = [created, hash_, tags, status, rpt_bytes] + tgtvalues
             ph = ",".join("?" * len(insert_cols))
             # execute the insert
             cur = conn.cursor()
