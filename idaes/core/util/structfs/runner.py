@@ -276,8 +276,16 @@ class Runner:
     def _save_report(self):
         rpt = self.report()
         _log.debug("Adding report to DB")
-        # TODO: get status from report
-        self._report_db.add_report(rpt, tags=self._tags)
+        
+        status = False
+        try:
+            if hasattr(self, "solver_status"):
+                # If we are using FlowsheetRunner, check its solver_status property
+                status = self.solver_status in ("ok", "optimal")
+        except Exception as e:
+            _log.warning(f"Failed to extract status for report, defaulting to False. Detail: {e}")
+            
+        self._report_db.add_report(rpt, tags=self._tags, status=status)
 
     def set_report_target(self, **target_kw):
         """Set target for report generation.
