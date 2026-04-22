@@ -254,14 +254,12 @@ treatment in display, etc. with the
 ```
 
 '''
-
-from .simple_wrap import _Wrapper
+from .fsrunner import FlowsheetRunner
 from .runner import Runner
+from .simple_wrap import _Wrapper
 
 #: Flowsheet inspector simple wrapper
 fi_main = _Wrapper.main
 
 #: Get the default ReportDB database (wrapper) for reports
 get_report_db = Runner.get_report_db
-
-from .fsrunner import FlowsheetRunner
