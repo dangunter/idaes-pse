@@ -44,18 +44,13 @@ extensions = [
 ]
 
 # Myst autodoc2 (experimental)
-autodoc2_packages = [
-    "../idaes/core/util/structfs",
-]
+# note: putting tests in 'exclude_dirs' avoids a WARNING about some duplicated
+#       objects in the hda_*.py files.
+autodoc2_packages = [{"path": "../idaes/core/util/structfs", "exclude_dirs": ["tests"]}]
 autodoc2_output_dir = "reference_guides/core/util"
 autodoc2_render_plugin = "myst"
-autodoc2_docstring_parser_regexes = [
-    # render docstrings in matching files as Markdown
-    ("../idaes/core/util/structfs/.*", "myst"),
-]
 autodoc2_no_index = True
 autodoc2_index_template = None  # don't write index.rst
-
 # Put type hints in the description, not signature
 autodoc_typehints = "description"
 
