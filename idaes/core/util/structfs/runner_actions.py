@@ -481,6 +481,7 @@ class CaptureSolverOutput(SolverActionBase):
         super().__init__(runner, **kwargs)
         self._logs = {}
         self._solver_out = None
+        self._save_stdout = None
 
     def before_step(self, step_name: str):
         """Action performed before the step."""
@@ -493,6 +494,10 @@ class CaptureSolverOutput(SolverActionBase):
         if self._solver_out is not None:
             self._logs[step_name] = self._solver_out.getvalue()
             self._solver_out = None
+            sys.stdout = self._save_stdout
+
+    def step_failed(self, step_name: str, err: Exception):
+        if self._save_stdout:
             sys.stdout = self._save_stdout
 
     def report(self) -> Report:

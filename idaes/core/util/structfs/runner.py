@@ -18,6 +18,7 @@ Run functions in a module in a defined, named, sequence.
 from abc import ABC, abstractmethod
 import logging
 from pathlib import Path
+import traceback
 from typing import Callable, Optional, Tuple, Sequence, TypeVar
 
 # third party
@@ -285,20 +286,25 @@ class Runner:
         rpt = self.report()
         _log.debug("Adding report to DB")
 
-        # get solver result
+        # get solver result (even if we failed!)
         try:
             # try to extract from report
             actions = rpt["actions"]
             solver_results_list = actions[ActionNames.SOLVER_RESULTS]["results"]
             last_result = solver_results_list[-1]
-            solver_result = last_result["solver"]["Termination condition"]
+            solver_result = last_result["solver"]["Status"]
         except KeyError:
             # if that doesn't work, just set to an empty string
             solver_result = ""
+
         # get run result
         if self._failed:
             run_result = False
-            run_error = str(self._failed[1])
+            # get exception as string XXX: maybe get trace?
+            e = self._failed[1]
+            tb = e.__traceback__
+            tb_text = "".join(traceback.format_tb(tb))
+            run_error = f"{e.__class__.__name__}: {e}\nTraceback:\n{tb_text}"
         else:
             run_result = True
             run_error = ""
@@ -409,6 +415,10 @@ class Runner:
         for action in self._actions.values():
             action.after_substep(base, name)
 
+    def _step_failed(self, name: str, err: Exception):
+        for action in self._actions.values():
+            action.step_failed(name, err)
+
     def step(self, name: str):
         """Decorator function for creating a new step.
 
@@ -432,6 +442,7 @@ class Runner:
                     self._step_end(name)
                 else:
                     self._failed = (name, run_err)
+                    self._step_failed(name, run_err)
                 return result
 
             self.add_step(name, wrapper)
@@ -629,6 +640,15 @@ class Action(ABC):
         Args:
             step_name: Name of the step
             substep_name: Name of the sub-step
+        """
+        return
+
+    def step_failed(self, step_name: str, err: Exception):
+        """Called if the step had an exception
+
+        Args:
+            step_name: Name of the step
+            err: Exception object
         """
         return
 
