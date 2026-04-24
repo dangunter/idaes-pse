@@ -35,12 +35,7 @@ except ImportError:
 
 # package
 from .runner import Runner
-
-DEFAULT_SOLVER_NAME = "ipopt"
-
-# Constants
-#: Special key used to embed a flowsheet runner instance in a result dict
-RESULT_FLOWSHEET_KEY = "__fi"
+from .common import ActionNames, DEFAULT_SOLVER_NAME, RESULT_FLOWSHEET_KEY
 
 
 class Context(dict):
@@ -84,16 +79,16 @@ class Context(dict):
         return self["tee"]
 
     @property
-    def results(self):
+    def results(self) -> dict:
         """Return the stored solver results, if any.
 
         Returns:
-            The stored solver results object, or None if no solve has run.
+            The stored solver results object, or an empty dict if no solve has run.
         """
-        return self.get("results", None)
+        return self.get("results", {})
 
     @results.setter
-    def results(self, value):
+    def results(self, value: dict):
         """Store solver results in the context.
 
         Args:
@@ -412,12 +407,12 @@ class FlowsheetRunner(BaseFlowsheetRunner):
         super().__init__(**kwargs)
         self.dof = self.DegreesOfFreedom(self)
         self.timings = self.Timings(self)
-        self.add_action("solver_output", CaptureSolverOutput)
-        self.add_action("solver_results", GetSolverResults)
-        self.add_action("diagnostics", Diagnostics)
-        self.add_action("model_variables", ModelVariables)
-        self.add_action("mermaid_diagram", MermaidDiagram)
-        self.add_action("stream_table", StreamTable)
+        self.add_action(ActionNames.SOLVER_OUTPUT.value, CaptureSolverOutput)
+        self.add_action(ActionNames.SOLVER_RESULTS.value, GetSolverResults)
+        self.add_action(ActionNames.DIAGNOSTICS.value, Diagnostics)
+        self.add_action(ActionNames.MODEL_VARIABLES.value, ModelVariables)
+        self.add_action(ActionNames.MERMAID_DIAGRAM.value, MermaidDiagram)
+        self.add_action(ActionNames.STREAM_TABLE.value, StreamTable)
 
     def build(self):
         """Run just the build step"""

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 # package
 from idaes.config import get_data_directory
 from .reportdb import ReportDB
+from .common import ActionNames
 
 __author__ = "Dan Gunter (LBNL)"
 
@@ -78,6 +79,7 @@ class Runner:
         self._actions: dict[str, ActionType] = {}
         self._step_names = list(steps)
         self._steps: dict[str, Step] = {}
+        self._failed = False
         self.reset()
         self._tags = ""  # for reporting
         self._report_db = report_db or self._get_default_report_db(create=True)
@@ -268,24 +270,46 @@ class Runner:
             if step:
                 step.func(self._context)
                 self._last_run_steps.append(step.name)
+            if self._failed:
+                _log.error(f"Step failed: {self._failed[0]}")
+                break  # stop
 
         # execute overall after-run action
-        for action in self._actions.values():
-            action.after_run()
+        if self._failed:
+            _log.error("Run failed")
+        else:
+            for action in self._actions.values():
+                action.after_run()
 
     def _save_report(self):
         rpt = self.report()
         _log.debug("Adding report to DB")
-        
-        status = False
+
+        # get solver result
         try:
-            if hasattr(self, "solver_status"):
-                # If we are using FlowsheetRunner, check its solver_status property
-                status = self.solver_status in ("ok", "optimal")
-        except Exception as e:
-            _log.warning(f"Failed to extract status for report, defaulting to False. Detail: {e}")
-            
-        self._report_db.add_report(rpt, tags=self._tags, status=status)
+            # try to extract from report
+            actions = rpt["actions"]
+            solver_results_list = actions[ActionNames.SOLVER_RESULTS]["results"]
+            last_result = solver_results_list[-1]
+            solver_result = last_result["solver"]["Termination condition"]
+        except KeyError:
+            # if that doesn't work, just set to an empty string
+            solver_result = ""
+        # get run result
+        if self._failed:
+            run_result = False
+            run_error = str(self._failed[1])
+        else:
+            run_result = True
+            run_error = ""
+
+        self._report_db.add_report(
+            rpt,
+            tags=self._tags,
+            solver_status=solver_result,
+            run_status=run_result,
+            run_exc=run_error,
+        )
 
     def set_report_target(self, **target_kw):
         """Set target for report generation.
@@ -300,6 +324,7 @@ class Runner:
         """Reset runner internal state, especially the context."""
         self._context = {}
         self._last_run_steps = []
+        self._failed = False
 
     def list_steps(self, all_steps=False) -> list[str]:
         """Get list of [runnable] steps."""
@@ -398,8 +423,15 @@ class Runner:
 
             def wrapper(*args, **kwargs):
                 self._step_begin(name)
-                result = func(*args, **kwargs)
-                self._step_end(name)
+                ok, run_err = True, None
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as err:
+                    ok, result, run_err = False, None, err
+                if ok:
+                    self._step_end(name)
+                else:
+                    self._failed = (name, run_err)
                 return result
 
             self.add_step(name, wrapper)
@@ -426,8 +458,15 @@ class Runner:
 
             def wrapper(*args, **kwargs):
                 self._substep_begin(base, name)
-                result = func(*args, **kwargs)
-                self._substep_end(base, name)
+                ok, run_err = True, None
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as err:
+                    ok, result, run_err = False, None, err
+                if ok:
+                    self._substep_end(base, name)
+                else:
+                    self._failed = (base + "." + name, run_err)
                 return result
 
             self.add_substep(base, name, wrapper)

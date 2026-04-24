@@ -203,7 +203,11 @@ class Timer(Action):
         Returns:
             The report object
         """
-        rpt = self.Report(timings=self.step_times[-1].copy())
+        if self.step_times:
+            timings = self.step_times[-1].copy()
+        else:
+            timings = {}
+        rpt = self.Report(timings=timings)
         return rpt
 
 
@@ -270,7 +274,7 @@ class UnitDofChecker(Action):
                 raise ValueError("At least one step name must be provided")
             self._steps = set(steps)
         self._steps_dof: dict[str, UnitDofType] = {}
-        self._model_dof = None
+        self._model_dof = 0
         self._step_func, self._run_func = step_func, run_func
         self._fs = flowsheet
 
@@ -634,7 +638,9 @@ class ModelVariables(Action):
         """
         assert isinstance(runner, BaseFlowsheetRunner)  # makes no sense otherwise
         super().__init__(runner, **kwargs)
-        self._vars, self._port_vars = {}, {}
+        self._vars = {}
+        self._port_vars = {}
+        self._ports = {}
 
     def after_run(self):
         """Actions performed after the run."""
@@ -806,6 +812,7 @@ class MermaidDiagram(Action):
         super().__init__(runner, **kwargs)
         self._images = False  # TODO: make this configurable
         self._model_root_split = []
+        self.diagram = None
 
     def show_unit_images(self, value: bool):
         """Whether Mermaid displays images for units.
@@ -883,7 +890,11 @@ class StreamTable(Action):
         self._stream_table = dd
 
     def report(self) -> Report:
-        return self.Report(**self._stream_table)
+        if self._stream_table:
+            report = self.Report(**self._stream_table)
+        else:
+            report = self.Report(index=[], units=[], columns=[], data=[])
+        return report
 
 
 class Diagnostics(SolverActionBase):
@@ -908,6 +919,7 @@ class Diagnostics(SolverActionBase):
     def __init__(self, runner, **kwargs):
         super().__init__(runner, **kwargs)
         self._had_solve = False
+        self.diagnostics = {}
 
     def after_step(self, name):
         if self.is_solve_step(name):
@@ -916,9 +928,7 @@ class Diagnostics(SolverActionBase):
     def after_run(self):
         """Get model diagnostics after the run."""
         m = self._runner.model
-        if m is None:
-            self.diagnostics = {}
-        else:
+        if m is not None:
             try:
                 dd = DiagnosticsData(model=m)
                 if self._had_solve:

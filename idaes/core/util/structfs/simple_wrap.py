@@ -17,10 +17,12 @@ Simple wrapper
 # stdlib
 import inspect
 import logging
+from pathlib import Path
 import os
 
 # package
-from .fsrunner import BaseFlowsheetRunner, RESULT_FLOWSHEET_KEY
+from .fsrunner import BaseFlowsheetRunner
+from .common import RESULT_FLOWSHEET_KEY, ActionNames
 
 _log = logging.getLogger(__name__)
 
@@ -48,14 +50,14 @@ class SimpleFlowsheetRunner(BaseFlowsheetRunner):
         self.main_func = None
         self.main_func_args = []
         self.main_func_kwargs = {}
-        self.add_action("timings", Timer)
-        self.add_action("degrees_of_freedom", UnitDofChecker, "fs", ["build"])
-        self.add_action("capture_solver_output", CaptureSolverOutput)
-        self.add_action("solver_results", GetSolverResults)
-        self.add_action("model_variables", ModelVariables)
-        self.add_action("mermaid_diagram", MermaidDiagram)
-        self.add_action("stream_table", StreamTable)
-        self.add_action("diagnostics", Diagnostics)
+        self.add_action(ActionNames.TIMINGS.value, Timer)
+        self.add_action(ActionNames.DOF.value, UnitDofChecker, "fs", ["build"])
+        self.add_action(ActionNames.SOLVER_OUTPUT.value, CaptureSolverOutput)
+        self.add_action(ActionNames.SOLVER_RESULTS.value, GetSolverResults)
+        self.add_action(ActionNames.MODEL_VARIABLES.value, ModelVariables)
+        self.add_action(ActionNames.MERMAID_DIAGRAM.value, MermaidDiagram)
+        self.add_action(ActionNames.STREAM_TABLE.value, StreamTable)
+        self.add_action(ActionNames.DIAGNOSTICS.value, Diagnostics)
 
 
 # Global flowsheet runner, will create as needed
@@ -159,7 +161,10 @@ class _Wrapper:
                 if "module" not in main_kw:
                     main_kw["module"] = inspect.getmodule(main_fn).__name__
                 if "filename" not in main_kw:
-                    main_kw["filename"] = os.path.abspath(inspect.getfile(main_fn))
+                    main_file = inspect.getfile(main_fn)
+                    main_file_path = Path(main_file).absolute()
+                    main_kw["filename"] = main_file_path.name
+                    main_kw["filedir"] = str(main_file_path.parent)
                 _FS.main_func = main_fn
                 _FS.main_func_args = args
                 _FS.main_func_kwargs = kwargs

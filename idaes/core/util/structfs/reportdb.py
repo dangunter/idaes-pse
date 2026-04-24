@@ -44,9 +44,8 @@ class ReportDB:
     TARGET_COLUMNS = (
         ("name", "TEXT"),
         ("module", "TEXT"),
+        ("filedir", "TEXT"),
         ("filename", "TEXT"),
-        ("main_func", "TEXT"),
-        ("fs_object", "TEXT"),
     )
     COLUMNS = tuple(
         [
@@ -54,7 +53,9 @@ class ReportDB:
             ("created", "REAL"),
             ("target_hash", "TEXT"),
             ("tags", "TEXT"),
-            ("status", "BOOLEAN"),
+            ("solver_status", "TEXT"),
+            ("run_status", "BOOLEAN"),
+            ("run_exception", "TEXT"),
             ("report", "BLOB"),
         ]
         + list(TARGET_COLUMNS)
@@ -120,7 +121,9 @@ class ReportDB:
         data: str | dict,
         tags: str = "",
         hash_=None,
-        status: bool = False,
+        run_status: bool = False,
+        run_exc: str = "",
+        solver_status: str = "NA",
         **target_kw,
     ):
         """Insert a report and its metadata into the database.
@@ -131,6 +134,9 @@ class ReportDB:
                 normalized to lowercase and sorted before storage.
             hash_: Optional hash for the report target. If omitted, an empty
                 string is stored.
+            run_status: Overall run success flag to store with the report.
+            run_exc: Overall run exception message, if it failed.
+            solver_status: Solver status value to store with the report.
             **target_kw: Target metadata values for this report keyed by names
                 in :attr:`TARGET_COLUMNS`. Values not provided here fall back
                 to the current target set by :meth:`set_target`.
@@ -164,15 +170,21 @@ class ReportDB:
             else:
                 rpt_bytes = json.dumps(data).encode("utf-8")
             # construct inserted values and placeholder
-            colvalues = [created, hash_, tags, status, rpt_bytes] + tgtvalues
+            colvalues = [
+                created,
+                hash_,
+                tags,
+                solver_status,
+                run_status,
+                run_exc,
+                rpt_bytes,
+            ] + tgtvalues
             ph = ",".join("?" * len(insert_cols))
             # execute the insert
             cur = conn.cursor()
             insert_cols_str = ", ".join(insert_cols)
-            cur.execute(
-                f"INSERT INTO {self.TABLE} ({insert_cols_str}) VALUES ({ph})",
-                colvalues,
-            )
+            stmt = f"INSERT INTO {self.TABLE} ({insert_cols_str}) VALUES ({ph})"
+            cur.execute(stmt, colvalues)
             # cleanup
             cur.close()
             conn.commit()
