@@ -259,6 +259,7 @@ class Runner:
             action.before_run()
 
         # run each (defined) step
+        self._failed = False
         for i in range(step_range[0], step_range[1] + 1):
             # check whether to skip endpoints in range
             if (i == step_range[0] and not endpoints[0]) or (
