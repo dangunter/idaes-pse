@@ -122,6 +122,7 @@ class BaseFlowsheetRunner(Runner):
         "solve_initial",
         "add_costing",
         "initialize_costing",
+        "setup_optimization",
         "solve_optimization",
     )
 
